@@ -9,7 +9,7 @@ from NeuFlow import refine
 from NeuFlow import upsample
 from NeuFlow import utils
 from NeuFlow import config
-from NeuFlow import mycode
+from NeuFlow import fast_backbone
 
 import time
 
@@ -18,7 +18,7 @@ class NeuFlow(torch.nn.Module):
     def __init__(self):
         super().__init__()
         print("NeuFlow Initialized")
-        self.backbone = mycode.FastEncoder(config.feature_dim_s16, config.context_dim_s16, config.feature_dim_s8, config.context_dim_s8)
+        self.backbone = fast_backbone.FastEncoder(config.feature_dim_s16, config.context_dim_s16, config.feature_dim_s8, config.context_dim_s8)
         # self.backbone = backbone_v7.CNNEncoder(config.feature_dim_s16, config.context_dim_s16, config.feature_dim_s8, config.context_dim_s8)
         
         # context_dim??
