@@ -13,7 +13,9 @@ class Matching:
 
         b, c, h, w = feature0.shape
 
-        feature0 = feature0.flatten(-2).permute(0, 2, 1)
+        print("feature0 Before Flatten : ", feature0.shape)
+        feature0 = feature0.flatten(-2).permute(0, 2, 1)    
+        print("feature0 After Flatten : ", feature0.shape)
         feature1 = feature1.flatten(-2).permute(0, 2, 1)
 
         correspondence = F.scaled_dot_product_attention(feature0, feature1, self.flatten_grid)

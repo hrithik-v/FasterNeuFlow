@@ -9,16 +9,19 @@ from NeuFlow import refine
 from NeuFlow import upsample
 from NeuFlow import utils
 from NeuFlow import config
+from NeuFlow import mycode
 
 import time
 
 
 class NeuFlow(torch.nn.Module):
     def __init__(self):
-        super(NeuFlow, self).__init__()
-
-        self.backbone = backbone_v7.CNNEncoder(config.feature_dim_s16, config.context_dim_s16, config.feature_dim_s8, config.context_dim_s8)
+        super().__init__()
+        print("NeuFlow Initialized")
+        self.backbone = mycode.FastEncoder(config.feature_dim_s16, config.context_dim_s16, config.feature_dim_s8, config.context_dim_s8)
+        # self.backbone = backbone_v7.CNNEncoder(config.feature_dim_s16, config.context_dim_s16, config.feature_dim_s8, config.context_dim_s8)
         
+        # context_dim??
         self.cross_attn_s16 = transformer.FeatureAttention(config.feature_dim_s16+config.context_dim_s16, num_layers=2, ffn=True, ffn_dim_expansion=1, post_norm=True)
         
         self.matching_s16 = matching.Matching()
@@ -68,7 +71,7 @@ class NeuFlow(torch.nn.Module):
         context, features = torch.split(features, [context_dim, feature_dim], dim=1)
 
         context, _ = context.chunk(chunks=2, dim=0)
-        feature0, feature1 = features.chunk(chunks=2, dim=0)
+        # feature0, feature1 = features.chunk(chunks=2, dim=0)
 
         return features, torch.relu(context)
 
@@ -80,11 +83,17 @@ class NeuFlow(torch.nn.Module):
         img1 /= 255.
 
         features_s16, features_s8 = self.backbone(torch.cat([img0, img1], dim=0))
-
+        
+        # print("Successful")
+        print("Before Cross_attn_s16: ", features_s16.shape)
         features_s16 = self.cross_attn_s16(features_s16)
+        print("After Cross_attn_s16: ", features_s16.shape)
 
+        # Splitting--
         features_s16, context_s16 = self.split_features(features_s16, config.context_dim_s16, config.feature_dim_s16)
         features_s8, context_s8 = self.split_features(features_s8, config.context_dim_s8, config.feature_dim_s8)
+        print("Features_s16:", features_s16.shape)
+        print("Context_s16:", context_s16.shape)
 
         feature0_s16, feature1_s16 = features_s16.chunk(chunks=2, dim=0)
 
@@ -146,4 +155,5 @@ class NeuFlow(torch.nn.Module):
                 up_flow0 = self.upsample_s8(feature0_s1, flow0) * 8
                 flow_list.append(up_flow0)
 
+        print("Successful")
         return flow_list

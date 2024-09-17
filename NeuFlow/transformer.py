@@ -80,6 +80,7 @@ class FeatureAttention(torch.nn.Module):
             concat_features1 = torch.cat(concat_features0.chunk(chunks=2, dim=0)[::-1], dim=0)
 
         # reshape back
+        # ???
         concat_features0 = concat_features0.view(b, h, w, c).permute(0, 3, 1, 2).contiguous()  # [B, C, H, W]
         
         if self.post_norm:

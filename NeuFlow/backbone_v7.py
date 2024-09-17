@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 class ConvBlock(torch.nn.Module):
     def __init__(self, in_planes, out_planes, kernel_size, stride, padding):
-        super(ConvBlock, self).__init__()
+        super().__init__()
 
         self.conv1 = torch.nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding, padding_mode='zeros', bias=False)
 
@@ -64,22 +64,34 @@ class CNNEncoder(torch.nn.Module):
         self.pos_s16 = self.init_pos(batch_size, height, width, device, amp)
 
     def forward(self, img):
-
-        img = F.avg_pool2d(img, kernel_size=2, stride=2)
+        print("img.shape", img.shape)
+        img = F.avg_pool2d(img, kernel_size=2, stride=2)    # H/2 W/2
+        print("AvgPool, img: ", img.shape)
         x_8 = self.block_8_1(img)
+        print("x_8: ", x_8.shape)
 
-        img = F.avg_pool2d(img, kernel_size=2, stride=2)
+        img = F.avg_pool2d(img, kernel_size=2, stride=2)    # H/2 W/2
         x_8_2 = self.block_8_2(img)
+        print("x_8_2: ", x_8_2.shape)
 
         x_8 = self.block_cat_8(torch.cat([x_8, x_8_2], dim=1))
+        print("After cat with x_8_2, x_8: ", x_8.shape)
 
-        img = F.avg_pool2d(img, kernel_size=2, stride=2)
+        img = F.avg_pool2d(img, kernel_size=2, stride=2)    # H/2 W/2
         x_16 = self.block_16_1(img)
+        print("x_16: ", x_16.shape)
 
         x_16_2 = self.block_8_16(x_8)
+        print("x_16_2: ", x_16_2.shape)
 
         x_16 = self.block_cat_16(torch.cat([x_16, x_16_2], dim=1))
+        print("After Cat with x_16_2, x_16: ", x_16.shape)
 
+        print("pos_16", self.pos_s16.shape)
         x_16 = torch.cat([x_16, self.pos_s16], dim=1)
+        print("After Cat with pos_s16, x_16: ", x_16.shape)
+
+        print("x_16.shape", x_16.shape)
+        print("x_8.shape", x_8.shape)
 
         return x_16, x_8

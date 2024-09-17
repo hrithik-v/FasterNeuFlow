@@ -8,16 +8,17 @@ from NeuFlow.backbone_v7 import ConvBlock
 from data_utils import flow_viz
 
 
-image_width = 768
-image_height = 432
+image_width = 224
+image_height = 224
 
 def get_cuda_image(image_path):
     image = cv2.imread(image_path)
 
     image = cv2.resize(image, (image_width, image_height))
 
-    image = torch.from_numpy(image).permute(2, 0, 1).half()
-    return image[None].cuda()
+    image = torch.from_numpy(image).permute(2, 0, 1).float()
+    # image = torch.from_numpy(image).permute(2, 0, 1).half()
+    return image.unsqueeze(0)
 
 
 def fuse_conv_and_bn(conv, bn):
@@ -53,13 +54,15 @@ def fuse_conv_and_bn(conv, bn):
 image_path_list = sorted(glob('test_images/*.jpg'))
 vis_path = 'test_results/'
 
-device = torch.device('cuda')
+device = torch.device('cpu')
 
 model = NeuFlow().to(device)
 
-checkpoint = torch.load('neuflow_mixed.pth', map_location='cuda')
+# ===== Not Loading Checkpoint ====== 
 
-model.load_state_dict(checkpoint['model'], strict=True)
+# checkpoint = torch.load('neuflow_mixed.pth', map_location='cpu')
+
+# model.load_state_dict(checkpoint['model'], strict=True)
 
 for m in model.modules():
     if type(m) is ConvBlock:
@@ -70,9 +73,16 @@ for m in model.modules():
         m.forward = m.forward_fuse  # update forward
 
 model.eval()
-model.half()
+# model.half()
 
-model.init_bhwd(1, image_height, image_width, 'cuda')
+model.init_bhwd(1, image_height, image_width, 'cpu', amp=False)
+
+
+test_img = torch.rand(1,3,224,224)
+from torchinfo import summary
+summary(model, input_data=(test_img, test_img))
+# total_params = sum(p.numel() for p in model.parameters())
+# print(f"Total number of parameters: {total_params}")
 
 if not os.path.exists(vis_path):
     os.makedirs(vis_path)
