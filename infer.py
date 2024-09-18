@@ -8,15 +8,15 @@ from NeuFlow.backbone_v7 import ConvBlock
 from data_utils import flow_viz
 
 
-image_width = 224
-image_height = 224
+image_width = 768
+image_height = 432
 
 def get_cuda_image(image_path):
     image = cv2.imread(image_path)
 
     image = cv2.resize(image, (image_width, image_height))
 
-    image = torch.from_numpy(image).permute(2, 0, 1).float()
+    image = torch.from_numpy(image).permute(2, 0, 1).float().cuda()
     # image = torch.from_numpy(image).permute(2, 0, 1).half()
     return image.unsqueeze(0)
 
@@ -54,7 +54,7 @@ def fuse_conv_and_bn(conv, bn):
 image_path_list = sorted(glob('test_images/*.jpg'))
 vis_path = 'test_results/'
 
-device = torch.device('cpu')
+device = torch.device('cuda')
 
 model = NeuFlow().to(device)
 
@@ -75,12 +75,12 @@ for m in model.modules():
 model.eval()
 # model.half()
 
-model.init_bhwd(1, image_height, image_width, 'cpu', amp=False)
+model.init_bhwd(1, image_height, image_width, 'cuda', amp=False)
 
 
 test_img = torch.rand(1,3,224,224)
-from torchinfo import summary
-summary(model, input_data=(test_img, test_img))
+# from torchinfo import summary
+# summary(model, input_data=(test_img, test_img))
 # total_params = sum(p.numel() for p in model.parameters())
 # print(f"Total number of parameters: {total_params}")
 
@@ -99,7 +99,7 @@ for image_path_0, image_path_1 in zip(image_path_list[:-1], image_path_list[1:])
     with torch.no_grad():
 
         flow = model(image_0, image_1)[-1][0]
-
+        break
         flow = flow.permute(1,2,0).cpu().numpy()
         
         flow = flow_viz.flow_to_image(flow)

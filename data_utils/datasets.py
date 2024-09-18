@@ -171,6 +171,7 @@ class FlyingChairs(FlowDataset):
 
         images = sorted(glob(osp.join(root, '*.ppm')))
         flows = sorted(glob(osp.join(root, '*.flo')))
+        print("length images:", len(images))
         assert (len(images) // 2 == len(flows))
 
         split_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chairs_split.txt')

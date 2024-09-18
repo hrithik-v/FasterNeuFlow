@@ -40,7 +40,7 @@ class ConvBlock(torch.nn.Module):
 class CNNEncoder(torch.nn.Module):
     def __init__(self, feature_dim_s16, context_dim_s16, feature_dim_s8, context_dim_s8):
         super(CNNEncoder, self).__init__()
-
+        
         self.block_8_1 = ConvBlock(3, feature_dim_s8 * 2, kernel_size=8, stride=4, padding=2)
 
         self.block_8_2 = ConvBlock(3, feature_dim_s8, kernel_size=6, stride=2, padding=2)

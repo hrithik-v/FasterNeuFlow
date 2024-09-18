@@ -93,14 +93,14 @@ class Downsample(nn.Module):
         self.reduction = nn.Sequential(
             nn.Conv2d(dim, dim_out, 3, 2, 1, bias=False),
         )
-        # print("Downsample init")
+        print("Downsample init")
 
     def forward(self, x):
-        # print("Downsampled, Before x:", x.shape)
+        print("Downsampled, Before x:", x.shape)
         x = self.norm(x)
-        # print("Downsampled, Norm done")
+        print("Downsampled, Norm done")
         x = self.reduction(x)
-        # print("Downsampled, Final x:", x.shape)
+        print("Downsampled, Final x:", x.shape)
         return x
 
 
@@ -335,9 +335,9 @@ class HAT(nn.Module):
     def forward(self, x, carrier_tokens):
         B, T, N = x.shape
         ct = carrier_tokens
-        # print("HAT: ct", ct.shape if ct is not None else None)
+        print("HAT: ct", ct.shape if ct is not None else None)
         x = self.pos_embed(x)
-        # print("HAT, pos_emb(), x:", x.shape)
+        print("HAT, pos_emb(), x:", x.shape)
 
         if self.sr_ratio > 1:  # spatial reduction ratio
             # do hierarchical attention via carrier tokens
@@ -351,18 +351,18 @@ class HAT(nn.Module):
                 self.cr_window * self.sr_ratio,
                 self.cr_window,
             )
-            # print("ct_dewindow, ct", ct.shape)
+            print("ct_dewindow, ct", ct.shape)
             # positional bias for carrier tokens
             ct = self.hat_pos_embed(ct)
 
-            # print("HAT_pos_embed", ct.shape)
+            print("HAT_pos_embed", ct.shape)
             # attention plus mlp
             ct = ct + self.hat_drop_path(
                 self.gamma1 * self.hat_attn(self.hat_norm1(ct))
             )
             ct = ct + self.hat_drop_path(self.gamma2 * self.hat_mlp(self.hat_norm2(ct)))
 
-            # print("Attention+ MLP: ", ct.shape)
+            print("Attention+ MLP: ", ct.shape)
             # ct are put back to windows
             ct = ct_window(
                 ct,
@@ -370,12 +370,12 @@ class HAT(nn.Module):
                 self.cr_window * self.sr_ratio,
                 self.cr_window,
             )
-            # print("ct_window, ct", ct.shape)
+            print("ct_window, ct", ct.shape)
 
             ct = ct.reshape(x.shape[0], -1, N)
             # concatenate carrier_tokens to the windowed tokens
             x = torch.cat((ct, x), dim=1)
-            # print("concat, ct+x: ", x.shape)
+            print("concat, ct+x: ", x.shape)
 
         # window attention together with carrier tokens
         x = x + self.drop_path(self.gamma3 * self.attn(self.norm1(x)))
@@ -399,7 +399,7 @@ class HAT(nn.Module):
                 x = x + self.gamma1 * self.upsampler(
                     ctr_image_space.to(dtype=torch.float32)
                 ).flatten(2).transpose(1, 2).to(dtype=x.dtype)
-        # print("HAT Final:", "x:", x.shape, "ct:", ct.shape if ct is not None else None)
+        print("HAT Final:", "x:", x.shape, "ct:", ct.shape if ct is not None else None)
         return x, ct
 
 
@@ -434,15 +434,18 @@ class TokenInitializer(nn.Module):
     def forward(self, x):
         x = self.to_global_feature(x)
         B, C, H, W = x.shape
-        ct = x.view(
-            B,
-            C,
-            H // self.window_size,
-            self.window_size,
-            W // self.window_size,
-            self.window_size,
-        )
-        ct = ct.permute(0, 2, 4, 3, 5, 1).reshape(-1, H * W, C)
+        print("B, C, H, W ", B, C, H, W)
+        # ct = x.view(
+        #     B,
+        #     C,
+        #     H // self.window_size,
+        #     self.window_size,
+        #     W // self.window_size,
+        #     self.window_size,
+        # )
+        # print('ct.shape', ct.shape)
+        # ct = ct.permute(0, 2, 4, 3, 5, 1).reshape(-1, H * W, C)
+        ct = x.view(B,H*W,C)
         return ct
 
 
@@ -743,7 +746,7 @@ class FasterViTLayer(nn.Module):
         self.conv = conv
         self.transformer_block = False
         if conv:
-            # print("conv")
+            print("conv")
             self.blocks = nn.ModuleList(
                 [
                     ConvBlock(
@@ -759,7 +762,7 @@ class FasterViTLayer(nn.Module):
             self.transformer_block = False
         else:
             sr_ratio = input_resolution // window_size if not only_local else 1
-            # print("HAT")
+            print("HAT")
             self.blocks = nn.ModuleList(
                 [
                     HAT(
@@ -802,20 +805,20 @@ class FasterViTLayer(nn.Module):
         self.window_size = window_size
 
     def forward(self, x):
-        # # print(f"x.shape: {x.shape}")
+        # print(f"x.shape: {x.shape}")
         ct = self.global_tokenizer(x) if self.do_gt else None
-        # print("after global tokenizer, ct: ", ct.shape if ct is not None else None)
+        print("after global tokenizer, ct: ", ct.shape if ct is not None else None)
         B, C, H, W = x.shape
         if self.transformer_block:  # Only when Conv=False
             x = window_partition(x, self.window_size)
-            # print("window_partition: ", x.shape)
+            print("window_partition: ", x.shape)
         for bn, blk in enumerate(self.blocks):
             x, ct = blk(x, ct)
-            # print("blocks; x: ", x.shape)
-            # print("blocks; ct: ", ct.shape if ct is not None else None)
+            print("blocks; x: ", x.shape)
+            print("blocks; ct: ", ct.shape if ct is not None else None)
         if self.transformer_block:
             x = window_reverse(x, self.window_size, H, W, B)
-            # print("window_reverse: ", x.shape)
+            print("window_reverse: ", x.shape)
         # if self.downsample is None:
         #     return x
         # return self.downsample(x)
@@ -850,25 +853,46 @@ class FastEncoder(nn.Module):
         context_dim_s16,
         feature_dim_s8,
         context_dim_s8,
-        dim=64, # don't know
-        in_dim=64, # don't know
-        depths=[2, 3, 6],
-        window_size=[7, 7, 7],
+        # dim=64, # don't know
+        # in_dim=64, # don't know
+        # depths=[2, 3, 6],
+        # window_size=[7, 7, 7],
+        # ct_size=2,
+        # mlp_ratio=4,
+        # num_heads=[2, 4, 8],
+        # resolution=224,
+        # drop_path_rate=0.2,
+        # in_chans=3,
+        # qkv_bias=True,
+        # qk_scale=None,
+        # drop_rate=0.0,
+        # attn_drop_rate=0.0,
+        # layer_scale=None,
+        # layer_scale_conv=None,
+        # layer_norm_last=False,
+        # hat=[False, False, True, False],
+        # do_propagation=False,
+        # **kwargs
+        # --------------
+        depths=[3, 3, 12, 5],
+        num_heads=[4, 8, 16, 32],
+        window_size=[7, 7, 48, 24],
         ct_size=2,
+        dim=196,
+        in_dim=64,
         mlp_ratio=4,
-        num_heads=[2, 4, 8],
-        resolution=224,
-        drop_path_rate=0.2,
+        resolution=768,
+        drop_path_rate=0.42,
         in_chans=3,
         qkv_bias=True,
         qk_scale=None,
         drop_rate=0.0,
         attn_drop_rate=0.0,
-        layer_scale=None,
+        layer_scale=1e-5,
         layer_scale_conv=None,
         layer_norm_last=False,
-        hat=[False, False, True, False],
-        do_propagation=False,
+        do_propagation=True,
+        hat=[False, False, False, False],
         **kwargs
     ):
         super().__init__()
@@ -920,13 +944,13 @@ class FastEncoder(nn.Module):
 
     def forward(self, img):
         x = self.patch_embed(img)
-        # print("patch embed: ", x.shape)
+        print("patch embed: ", x.shape)
 
         x = self.downsample_1(x)
         x = self.levels[1](x)
-        # print("A", x.shape) # torch.Size([2, 128, 28, 28])
+        print("A", x.shape) # torch.Size([2, 128, 28, 28])
         x8 = self.res_x8(x) 
-        # print("B")
+        print("B")
 
         x = self.downsample_2(x)
         x = self.levels[2](x)
@@ -937,11 +961,12 @@ class FastEncoder(nn.Module):
 
 if __name__ == "__main__":
     model = FastEncoder(128, 64, 128, 64)
-    # print("Model initialized")
+    print("Model initialized")
 
-    x = torch.rand([2,3,224,224])
-    # print(x.shape)
+    # x = torch.rand([2,3,224,224])
+    x = torch.rand([2,3,768,432])
+    print(x.shape)
     x16, x8 = model(x)
 
-    # print(x16.shape)
-    # print(x8.shape)
+    print(x16.shape)
+    print(x8.shape)

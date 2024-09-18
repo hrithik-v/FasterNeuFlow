@@ -161,12 +161,12 @@ def main(args):
             scaler.unscale_(optimizer)
 
             bad_grad = False
-            for name, param in model.named_parameters():
-                if not torch.all(torch.isfinite(param.grad)):
-                    bad_grad = True
-                if bad_grad:
-                    print(name, param.grad.mean().item())
-                # print(name, torch.max(torch.abs(param.grad)).item())
+            # for name, param in model.named_parameters():
+            #     if not torch.all(torch.isfinite(param.grad)):
+            #         bad_grad = True
+            #     if bad_grad:
+            #         print(name, param.grad.mean().item())
+            #     # print(name, torch.max(torch.abs(param.grad)).item())
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
