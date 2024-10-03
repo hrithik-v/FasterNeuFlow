@@ -8,8 +8,8 @@ from NeuFlow.backbone_v7 import ConvBlock
 from data_utils import flow_viz
 
 
-image_width = 224
-image_height = 224
+image_width = 768
+image_height = 384
 
 def get_cuda_image(image_path):
     image = cv2.imread(image_path)
@@ -78,9 +78,9 @@ model.eval()
 model.init_bhwd(1, image_height, image_width, 'cpu', amp=False)
 
 
-test_img = torch.rand(1,3,224,224)
-from torchinfo import summary
-summary(model, input_data=(test_img, test_img))
+# test_img = torch.rand(1,3,224,224)
+# from torchinfo import summary
+# summary(model, input_data=(test_img, test_img))
 # total_params = sum(p.numel() for p in model.parameters())
 # print(f"Total number of parameters: {total_params}")
 

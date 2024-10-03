@@ -3,26 +3,36 @@ import torch.nn as nn
 import numpy as np
 from timm.models.layers import trunc_normal_, DropPath, LayerNorm2d
 
+factor = 2
+
 
 def window_partition(x, window_size):
     B, C, H, W = x.shape
-    pad_h = (window_size - H % window_size) % window_size
-    pad_w = (window_size - W % window_size) % window_size
-    x = nn.functional.pad(x, (0, pad_w, 0, pad_h), mode='replicate')
-    x = x.view(B, C, (H + pad_h) // window_size, window_size, (W + pad_w) // window_size, window_size)
+    x = x.view(B, C, H // window_size, window_size, W // window_size, window_size)
     windows = x.permute(0, 2, 4, 3, 5, 1).reshape(-1, window_size * window_size, C)
     return windows
+    # pad_h = (window_size - H % window_size) % window_size
+    # pad_w = (window_size - W % window_size) % window_size
+    # x = nn.functional.pad(x, (0, pad_w, 0, pad_h), mode='replicate')
+    # x = x.view(B, C, (H + pad_h) // window_size, window_size, (W + pad_w) // window_size, window_size)
+    # windows = x.permute(0, 2, 4, 3, 5, 1).reshape(-1, window_size * window_size, C)
+    # return windows
 
 
 def window_reverse(windows, window_size, H, W, B):
-    pad_h = (window_size - H % window_size) % window_size
-    pad_w = (window_size - W % window_size) % window_size
     x = windows.view(
-        B, (H + pad_h) // window_size, (W + pad_w) // window_size, window_size, window_size, -1
+        B, H // window_size, W // window_size, window_size, window_size, -1
     )
-    x = x.permute(0, 5, 1, 3, 2, 4).reshape(B, windows.shape[2], H + pad_h, W + pad_w)
-    x = x[:, :, :H, :W]  # remove padding
+    x = x.permute(0, 5, 1, 3, 2, 4).reshape(B, windows.shape[2], H, W)
     return x
+    # pad_h = (window_size - H % window_size) % window_size
+    # pad_w = (window_size - W % window_size) % window_size
+    # x = windows.view(
+    #     B, (H + pad_h) // window_size, (W + pad_w) // window_size, window_size, window_size, -1
+    # )
+    # x = x.permute(0, 5, 1, 3, 2, 4).reshape(B, windows.shape[2], H + pad_h, W + pad_w)
+    # x = x[:, :, :H, :W]  # remove padding
+    # return x
 
 
 def ct_dewindow(ct, W, H, window_size):
@@ -33,17 +43,20 @@ def ct_dewindow(ct, W, H, window_size):
     ct2 = ct.view(
         -1, W // window_size, H // window_size, window_size, window_size, N
     ).permute(0, 5, 1, 3, 2, 4)
+    print("ct2", ct2.shape)
+    # ct2 = ct2.reshape(bs, N, -1).transpose(1, 2)
     ct2 = ct2.reshape(bs, N, W * H).transpose(1, 2)
     return ct2
 
 
 def ct_window(ct, W, H, window_size):
-    bs = ct.shape[0]
-    N = ct.shape[2]
+    print("Fn: ct_window, W, H, window_size", W, H, window_size)
+    print("Fn: ct_window, ct", ct.shape)
+    bs = ct.shape[0]  # 2
+    N = ct.shape[2]  # 256
     ct = ct.view(bs, H // window_size, window_size, W // window_size, window_size, N)
     ct = ct.permute(0, 1, 3, 2, 4, 5)
     return ct
-
 
 
 class PatchEmbed(nn.Module):
@@ -226,7 +239,7 @@ class HAT(nn.Module):
 
     def __init__(
         self,
-        dim,
+        dim,  # 256
         num_heads,
         mlp_ratio=4.0,
         qkv_bias=False,
@@ -264,12 +277,17 @@ class HAT(nn.Module):
             do_propagation: enable carrier token propagation.
         """
         # positional encoding for windowed attention tokens
-        self.pos_embed = PosEmbMLPSwinv1D(dim, rank=2, seq_length=window_size**2)
+        print("Inside HAT init")
+        # seq_length : 36 (6x6)
+        self.pos_embed = PosEmbMLPSwinv1D(
+            dim, rank=2, seq_length=window_size**2
+        )  # 256, 2, 36
         self.norm1 = norm_layer(dim)
         # number of carrier tokens per every window
         cr_tokens_per_window = ct_size**2 if sr_ratio > 1 else 0
         # total number of carrier tokens
         cr_tokens_total = cr_tokens_per_window * sr_ratio * sr_ratio
+        print("cr_tokens_total: ", cr_tokens_total)
         self.cr_window = ct_size
         self.attn = WindowAttention(
             dim,
@@ -326,9 +344,11 @@ class HAT(nn.Module):
             self.hat_drop_path = (
                 DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
             )
+            print("HAT, sr_ratio>1", sr_ratio)
+
             self.hat_pos_embed = PosEmbMLPSwinv1D(
                 dim, rank=2, seq_length=cr_tokens_total
-            )
+            )  # 256, 2, 64
             self.gamma1 = (
                 nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
             )
@@ -347,22 +367,27 @@ class HAT(nn.Module):
         print("HAT: ct", ct.shape if ct is not None else None)
         x = self.pos_embed(x)
         print("HAT, pos_emb(), x:", x.shape)
-
         if self.sr_ratio > 1:  # spatial reduction ratio
             # do hierarchical attention via carrier tokens
             # first do attention for carrier tokens
             Bg, Ng, Hg = ct.shape
 
             # ct are located quite differently
+            print("Inside self.sr_ratio")
+            print("sr_ratio: ", self.sr_ratio)
+            print("cr_window==ct_size: ", self.cr_window)
+
             ct = ct_dewindow(
                 ct,
-                self.cr_window * self.sr_ratio,
-                self.cr_window * self.sr_ratio,
-                self.cr_window,
+                self.cr_window * self.sr_ratio * factor,  # W
+                self.cr_window * self.sr_ratio,  # H
+                self.cr_window,  # window_size
             )
             print("ct_dewindow, ct", ct.shape)
             # positional bias for carrier tokens
-            ct = self.hat_pos_embed(ct)
+            print("---------HAT_pos_embed------------START----")
+            ct = self.hat_pos_embed(ct)  # issue here ========================
+            print("---------HAT_pos_embed------------END------")
 
             print("HAT_pos_embed", ct.shape)
             # attention plus mlp
@@ -375,9 +400,9 @@ class HAT(nn.Module):
             # ct are put back to windows
             ct = ct_window(
                 ct,
-                self.cr_window * self.sr_ratio,
-                self.cr_window * self.sr_ratio,
-                self.cr_window,
+                self.cr_window * self.sr_ratio * factor,  # W
+                self.cr_window * self.sr_ratio,  # H
+                self.cr_window,  # window_size
             )
             print("ct_window, ct", ct.shape)
 
@@ -441,21 +466,21 @@ class TokenInitializer(nn.Module):
         self.window_size = ct_size
 
     def forward(self, x):
-        print("Before:", x.shape)  # torch.Size([2, 256, 14, 14])
+        print("Before:", x.shape)  # torch.Size([2, 256, 48, 24])
         x = self.to_global_feature(x)
-        print("After:", x.shape)  # torch.Size([2, 256, 4, 4])
+        print("After:", x.shape)  # torch.Size([2, 256, 16, 8])
         B, C, H, W = x.shape
         w_size = self.window_size
 
         # Calculate padding
-        pad_h = (w_size - H % w_size) % w_size
-        pad_w = (w_size - W % w_size) % w_size
+        # pad_h = (w_size - H % w_size) % w_size
+        # pad_w = (w_size - W % w_size) % w_size
 
         # Pad the input tensor
-        x = nn.functional.pad(x, (0, pad_w, 0, pad_h), mode='replicate')
+        # x = nn.functional.pad(x, (0, pad_w, 0, pad_h), mode='replicate')
 
         # Update H and W after padding
-        H, W = x.shape[2], x.shape[3]
+        # H, W = x.shape[2], x.shape[3]
 
         ct = x.view(
             B,
@@ -602,8 +627,14 @@ class PosEmbMLPSwinv2D(nn.Module):
 class PosEmbMLPSwinv1D(nn.Module):
     def __init__(self, dim, rank=2, seq_length=4, conv=False):
         super().__init__()
+        print("Inside PosEmbMLPSwinv1D init")
+        print("dim: ", dim, end="")  # 256
+        print(" rank: ", rank, end="")  # 2
+        print(" seq_length: ", seq_length, end="")
+        print(" conv: ", conv)  # False
+        print()
         self.rank = rank
-        if not conv:
+        if not conv:  # This will run ---------------------
             self.cpb_mlp = nn.Sequential(
                 nn.Linear(self.rank, 512, bias=True),
                 nn.ReLU(),
@@ -626,7 +657,12 @@ class PosEmbMLPSwinv1D(nn.Module):
         self.deploy = True
 
     def forward(self, input_tensor):
-        seq_length = input_tensor.shape[1] if not self.conv else input_tensor.shape[2]
+        print("Inside PosEmbMLPSwinv1D-----------------")
+        print("input_tensor.shape: ", input_tensor.shape)  # torch.Size([2, 128, 256])
+        seq_length = (
+            input_tensor.shape[1] if not self.conv else input_tensor.shape[2]
+        )  # 128
+        print("#####seq_length: ", seq_length)
         if self.deploy:
             return input_tensor + self.relative_bias
         else:
@@ -634,17 +670,20 @@ class PosEmbMLPSwinv1D(nn.Module):
         if not self.grid_exists:
             self.grid_exists = True
             if self.rank == 1:
-                relative_coords_h = torch.arange(
-                    0, seq_length, device=input_tensor.device, dtype=input_tensor.dtype
-                )
-                relative_coords_h -= seq_length // 2
-                relative_coords_h /= seq_length // 2
-                relative_coords_table = relative_coords_h
-                self.pos_emb = self.cpb_mlp(
-                    relative_coords_table.unsqueeze(0).unsqueeze(2)
-                )
-                self.relative_bias = self.pos_emb
+                pass
+                # relative_coords_h = torch.arange(
+                #     0, seq_length, device=input_tensor.device, dtype=input_tensor.dtype
+                # )
+                # relative_coords_h -= seq_length // 2
+                # relative_coords_h /= seq_length // 2
+                # relative_coords_table = relative_coords_h
+                # self.pos_emb = self.cpb_mlp(
+                #     relative_coords_table.unsqueeze(0).unsqueeze(2)
+                # )
+                # self.relative_bias = self.pos_emb
+
             else:
+                # This will run ---------------------
                 seq_length = int(seq_length**0.5)
                 relative_coords_h = torch.arange(
                     0, seq_length, device=input_tensor.device, dtype=input_tensor.dtype
@@ -659,14 +698,31 @@ class PosEmbMLPSwinv1D(nn.Module):
                 )
                 relative_coords_table -= seq_length // 2
                 relative_coords_table /= seq_length // 2
-                if not self.conv:
+                print("relative_coords_table.shape: ", relative_coords_table.shape)
+                if not self.conv:  # This will run ---------------------
                     self.pos_emb = self.cpb_mlp(
                         relative_coords_table.flatten(2).transpose(1, 2)
                     )
+                    print(
+                        "===>self.pos_emb.shape: ", self.pos_emb.shape
+                    )  # torch.Size([2, 121, 256])
                 else:
-                    self.pos_emb = self.cpb_mlp(relative_coords_table.flatten(2))
+                    pass
+                    # self.pos_emb = self.cpb_mlp(relative_coords_table.flatten(2))
                 self.relative_bias = self.pos_emb
-        input_tensor = input_tensor + self.pos_emb
+        print("self.pos_emb.shape: ", self.pos_emb.shape)  # torch.Size([1, 121, 256])
+
+        # Calculate the padding needed along the second dimension
+        padding_amount = input_tensor.shape[1] - self.pos_emb.shape[1]  # 128 (target) - 121 (current) = 7
+
+        # Apply replicate padding: (left_pad, right_pad, top_pad, bottom_pad)
+        # We are padding along the second dimension (height), so use (0, 0) for the third dimension (width)
+        pos_emb_padded = nn.functional.pad(self.pos_emb, (0, 0, 0, padding_amount), mode='replicate')
+
+        input_tensor = input_tensor + pos_emb_padded
+        # input_tensor = input_tensor + self.pos_emb
+        # print("not adding pos_emb-----------------")
+        print("After input_tensor.shape: ", input_tensor.shape)  # torch.Size([2, 128, 256])
         return input_tensor
 
 
@@ -781,7 +837,12 @@ class FasterViTLayer(nn.Module):
             )
             self.transformer_block = False
         else:
+            # input_resolution: 24, Window_Size: 6 for now
+
             sr_ratio = input_resolution // window_size if not only_local else 1
+            print("Fn: FasterVitLayer.__init__: input_resolution: ", input_resolution)
+            print("Fn: FasterVitLayer.__init__: window_size: ", window_size)
+            print("Fn: FasterVitLayer.__init__: sr_ratio: ", sr_ratio)
             print("HAT")
             self.blocks = nn.ModuleList(
                 [
@@ -844,10 +905,13 @@ class FasterViTLayer(nn.Module):
         # return self.downsample(x)
         return x
 
+
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, stride=stride)
+        self.conv1 = nn.Conv2d(
+            in_channels, out_channels, kernel_size=3, padding=1, stride=stride
+        )
         self.norm1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
@@ -857,7 +921,7 @@ class ResBlock(nn.Module):
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride),
-                nn.BatchNorm2d(out_channels)
+                nn.BatchNorm2d(out_channels),
             )
 
     def forward(self, x):
@@ -866,21 +930,23 @@ class ResBlock(nn.Module):
         out += self.shortcut(x)
         return out
 
+
 class FastEncoder(nn.Module):
     def __init__(
         self,
-        feature_dim_s16,
-        context_dim_s16,
-        feature_dim_s8,
-        context_dim_s8,
-        dim=64, # don't know
-        in_dim=64, # don't know
+        feature_dim_s16,  # 128
+        context_dim_s16,  # 64
+        feature_dim_s8,  # 128
+        context_dim_s8,  # 64
+        dim=64,  # don't know =============================================
+        in_dim=64,  # don't know ===========================================
         depths=[2, 3, 6],
-        window_size=[7, 7, 7],
+        window_size=[6, 6, 6],
+        # window_size=[7, 7, 7],
         ct_size=2,
         mlp_ratio=4,
         num_heads=[2, 4, 8],
-        resolution=224,
+        resolution=224,  # 384
         drop_path_rate=0.2,
         in_chans=3,
         qkv_bias=True,
@@ -890,9 +956,10 @@ class FastEncoder(nn.Module):
         layer_scale=None,
         layer_scale_conv=None,
         layer_norm_last=False,
-        hat=[False, False, True, False],
+        # hat=None,
+        hat=[False, False, True],
         do_propagation=False,
-        **kwargs
+        **kwargs,
     ):
         super().__init__()
         num_features = int(dim * 2 ** (len(depths) - 1))
@@ -900,43 +967,52 @@ class FastEncoder(nn.Module):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
         self.levels = nn.ModuleList()
         if hat is None:
+            print("hat is None")
             hat = [True] * len(depths)
 
-        self.res_x8 = ResBlock(feature_dim_s8, feature_dim_s8+context_dim_s8)
-        self.res_x16 = ResBlock(feature_dim_s16*2, feature_dim_s16+context_dim_s16)
+        self.res_x8 = ResBlock(feature_dim_s8, feature_dim_s8 + context_dim_s8)
+        self.res_x16 = ResBlock(feature_dim_s16 * 2, feature_dim_s16 + context_dim_s16)
         self.downsample_1 = Downsample(dim)
-        self.downsample_2 = Downsample(dim*2)
+        self.downsample_2 = Downsample(dim * 2)
 
         for i in range(len(depths)):
             conv = True if (i == 0 or i == 1) else False
             level = FasterViTLayer(
-                dim=int(dim * 2**i),
-                depth=depths[i],
-                num_heads=num_heads[i],
-                window_size=window_size[i],
-                ct_size=ct_size,
+                dim=int(dim * 2**i),  # 64, 128, 256
+                depth=depths[i],  # 2, 3, 6
+                num_heads=num_heads[i],  # 2, 4, 8
+                window_size=window_size[i],  # 7, 7, 7
+                ct_size=ct_size,  # 2
                 mlp_ratio=mlp_ratio,
                 qkv_bias=qkv_bias,
                 qk_scale=qk_scale,
-                conv=conv,
+                conv=conv,  # True, True, False
                 drop=drop_rate,
                 attn_drop=attn_drop_rate,
                 drop_path=dpr[sum(depths[:i]) : sum(depths[: i + 1])],
-                downsample=(i < 3),
+                downsample=(i < 3),  # True, True, True
                 layer_scale=layer_scale,
                 layer_scale_conv=layer_scale_conv,
-                input_resolution=int(2 ** (-2 - i) * resolution),
-                only_local=not hat[i],
-                do_propagation=do_propagation,
+                input_resolution=int(2 ** (-2 - i) * resolution),  # 96, 48, 24
+                only_local=not hat[i],  # True, True, False
+                do_propagation=do_propagation,  # False
             )
             self.levels.append(level)
 
     def init_pos(self, batch_size, height, width, device, amp):
-        ys, xs = torch.meshgrid(torch.arange(height, dtype=torch.half if amp else torch.float, device=device), torch.arange(width, dtype=torch.half if amp else torch.float, device=device), indexing='ij')
-        ys = (ys-height/2)
-        xs = (xs-width/2)
+        ys, xs = torch.meshgrid(
+            torch.arange(
+                height, dtype=torch.half if amp else torch.float, device=device
+            ),
+            torch.arange(
+                width, dtype=torch.half if amp else torch.float, device=device
+            ),
+            indexing="ij",
+        )
+        ys = ys - height / 2
+        xs = xs - width / 2
         pos = torch.stack([ys, xs])
-        return pos[None].repeat(batch_size,1,1,1)
+        return pos[None].repeat(batch_size, 1, 1, 1)
 
     def init_bhwd(self, batch_size, height, width, device, amp):
         self.pos_s16 = self.init_pos(batch_size, height, width, device, amp)
@@ -949,7 +1025,7 @@ class FastEncoder(nn.Module):
         x = self.downsample_1(x)
         x = self.levels[1](x)
 
-        x8 = self.res_x8(x) 
+        x8 = self.res_x8(x)
 
         x = self.downsample_2(x)
         x = self.levels[2](x)
@@ -961,13 +1037,15 @@ class FastEncoder(nn.Module):
 if __name__ == "__main__":
     # W = 224
     # H = 224
-    W = 768
-    H = W//2
-    model = FastEncoder(128, 64, 128, 64, resolution=W)
+
+    H = 384
+    # factor = 1    # For Square Dimensions
+    W = H * factor  # 768
+    model = FastEncoder(128, 64, 128, 64, resolution=H)
     print("Model initialized")
 
     # x = torch.rand([2,3,224,224])
-    x = torch.rand([2,3, H, W])
+    x = torch.rand([2, 3, H, W])
     print(x.shape)
     x16, x8 = model(x)
 
