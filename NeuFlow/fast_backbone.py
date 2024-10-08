@@ -2,76 +2,69 @@ import torch
 import torch.nn as nn
 import numpy as np
 from timm.models.layers import trunc_normal_, DropPath, LayerNorm2d
-
-factor = 2
+import torch.nn.functional as F
+import math
 
 
 def window_partition(x, window_size):
     B, C, H, W = x.shape
-    x = x.view(B, C, H // window_size, window_size, W // window_size, window_size)
-    windows = x.permute(0, 2, 4, 3, 5, 1).reshape(-1, window_size * window_size, C)
+    pad_h = (window_size - H % window_size) % window_size
+    pad_w = (window_size - W % window_size) % window_size
+
+    if pad_h > 0 or pad_w > 0:
+        x = F.pad(x, (0, pad_w, 0, pad_h))
+
+    H_padded, W_padded = x.shape[2], x.shape[3]
+
+    x = x.view(
+        B, C, H_padded // window_size, window_size, W_padded // window_size, window_size
+    )
+
+    windows = (
+        x.permute(0, 2, 4, 3, 5, 1).contiguous().view(-1, window_size * window_size, C)
+    )
+
     return windows
-    # pad_h = (window_size - H % window_size) % window_size
-    # pad_w = (window_size - W % window_size) % window_size
-    # x = nn.functional.pad(x, (0, pad_w, 0, pad_h), mode='replicate')
-    # x = x.view(B, C, (H + pad_h) // window_size, window_size, (W + pad_w) // window_size, window_size)
-    # windows = x.permute(0, 2, 4, 3, 5, 1).reshape(-1, window_size * window_size, C)
-    # return windows
 
 
 def window_reverse(windows, window_size, H, W, B):
+    H_padded = math.ceil(H / window_size) * window_size
+    W_padded = math.ceil(W / window_size) * window_size
     x = windows.view(
-        B, H // window_size, W // window_size, window_size, window_size, -1
+        B,
+        H_padded // window_size,
+        W_padded // window_size,
+        window_size,
+        window_size,
+        -1,
     )
-    x = x.permute(0, 5, 1, 3, 2, 4).reshape(B, windows.shape[2], H, W)
+    x = x.permute(0, 5, 1, 3, 2, 4).contiguous().view(B, -1, H_padded, W_padded)
+    if H_padded != H or W_padded != W:
+        x = x[:, :, :H, :W]
     return x
-    # pad_h = (window_size - H % window_size) % window_size
-    # pad_w = (window_size - W % window_size) % window_size
-    # x = windows.view(
-    #     B, (H + pad_h) // window_size, (W + pad_w) // window_size, window_size, window_size, -1
-    # )
-    # x = x.permute(0, 5, 1, 3, 2, 4).reshape(B, windows.shape[2], H + pad_h, W + pad_w)
-    # x = x[:, :, :H, :W]  # remove padding
-    # return x
 
 
 def ct_dewindow(ct, W, H, window_size):
-    print("ct_dewindow, ct", ct.shape)
-    print("ct_dewindow, W, H, window_size", W, H, window_size)
-    bs = ct.shape[0]
-    N = ct.shape[2]
-    ct2 = ct.view(
-        -1, W // window_size, H // window_size, window_size, window_size, N
-    ).permute(0, 5, 1, 3, 2, 4)
-    print("ct2", ct2.shape)
-    # ct2 = ct2.reshape(bs, N, -1).transpose(1, 2)
-    ct2 = ct2.reshape(bs, N, W * H).transpose(1, 2)
-    return ct2
+    bs, N, C = ct.shape
+    h_windows = H // window_size
+    w_windows = W // window_size
+    ct = ct.transpose(1, 2).view(bs, C, N)
+    ct = F.adaptive_avg_pool1d(ct, h_windows * w_windows)
+    ct = ct.view(bs, C, h_windows, w_windows)
+    ct = F.interpolate(ct, size=(H, W), mode="bilinear", align_corners=False)
+    return ct
 
 
 def ct_window(ct, W, H, window_size):
-    print("Fn: ct_window, W, H, window_size", W, H, window_size)
-    print("Fn: ct_window, ct", ct.shape)
-    bs = ct.shape[0]  # 2
-    N = ct.shape[2]  # 256
-    ct = ct.view(bs, H // window_size, window_size, W // window_size, window_size, N)
-    ct = ct.permute(0, 1, 3, 2, 4, 5)
+    bs, C, H, W = ct.shape
+    ct = ct.view(bs, C, H // window_size, window_size, W // window_size, window_size)
+    ct = ct.permute(0, 2, 4, 3, 5, 1).contiguous()
     return ct
 
 
 class PatchEmbed(nn.Module):
-    """
-    Patch embedding block based on: "Hatamizadeh et al.,
-    FasterViT: Fast Vision Transformers with Hierarchical Attention
-    """
-
-    def __init__(self, in_chans=3, in_dim=64, dim=96):
-        """
-        Args:
-            in_chans: number of input channels.
-            dim: feature size dimension.
-        """
-        super().__init__()
+    def _init_(self, in_chans=3, in_dim=64, dim=96):
+        super()._init_()
         self.proj = nn.Identity()
         self.conv_down = nn.Sequential(
             nn.Conv2d(in_chans, in_dim, 3, 2, 1, bias=False),
@@ -89,57 +82,23 @@ class PatchEmbed(nn.Module):
 
 
 class Downsample(nn.Module):
-    """
-    Down-sampling block based on: "Hatamizadeh et al.,
-    FasterViT: Fast Vision Transformers with Hierarchical Attention
-    """
-
-    def __init__(
-        self,
-        dim,
-        keep_dim=False,
-    ):
-        """
-        Args:
-            dim: feature size dimension.
-            norm_layer: normalization layer.
-            keep_dim: bool argument for maintaining the resolution.
-        """
-
-        super().__init__()
-        if keep_dim:
-            dim_out = dim
-        else:
-            dim_out = 2 * dim
+    def _init_(self, dim, keep_dim=False):
+        super()._init_()
+        dim_out = dim if keep_dim else 2 * dim
         self.norm = LayerNorm2d(dim)
         self.reduction = nn.Sequential(
             nn.Conv2d(dim, dim_out, 3, 2, 1, bias=False),
         )
-        print("Downsample init")
 
     def forward(self, x):
-        print("Downsampled, Before x:", x.shape)
         x = self.norm(x)
-        print("Downsampled, Norm done")
         x = self.reduction(x)
-        print("Downsampled, Final x:", x.shape)
         return x
 
 
 class ConvBlock(nn.Module):
-    """
-    Conv block based on: "Hatamizadeh et al.,
-    FasterViT: Fast Vision Transformers with Hierarchical Attention
-    """
-
-    def __init__(self, dim, drop_path=0.0, layer_scale=None, kernel_size=3):
-        super().__init__()
-        """
-        Args:
-            drop_path: drop path.
-            layer_scale: layer scale coefficient.
-            kernel_size: kernel size.
-        """
+    def _init_(self, dim, drop_path=0.0, layer_scale=None, kernel_size=3):
+        super()._init_()
         self.conv1 = nn.Conv2d(dim, dim, kernel_size=kernel_size, stride=1, padding=1)
         self.norm1 = nn.BatchNorm2d(dim, eps=1e-5)
         self.act1 = nn.GELU()
@@ -167,12 +126,7 @@ class ConvBlock(nn.Module):
 
 
 class WindowAttention(nn.Module):
-    """
-    Window attention based on: "Hatamizadeh et al.,
-    FasterViT: Fast Vision Transformers with Hierarchical Attention
-    """
-
-    def __init__(
+    def _init_(
         self,
         dim,
         num_heads=8,
@@ -183,18 +137,7 @@ class WindowAttention(nn.Module):
         resolution=0,
         seq_length=0,
     ):
-        super().__init__()
-        """
-        Args:
-            dim: feature size dimension.
-            num_heads: number of attention head.
-            qkv_bias: bool argument for query, key, value learnable bias.
-            qk_scale: bool argument to scaling query, key.
-            attn_drop: attention dropout rate.
-            proj_drop: output dropout rate.
-            resolution: feature resolution.
-            seq_length: sequence length.
-        """
+        super()._init_()
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.head_dim = dim // num_heads
@@ -203,14 +146,12 @@ class WindowAttention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
-        # attention positional bias
         self.pos_emb_funct = PosEmbMLPSwinv2D(
             window_size=[resolution, resolution],
             pretrained_window_size=[resolution, resolution],
             num_heads=num_heads,
             seq_length=seq_length,
         )
-
         self.resolution = resolution
 
     def forward(self, x):
@@ -232,14 +173,9 @@ class WindowAttention(nn.Module):
 
 
 class HAT(nn.Module):
-    """
-    Hierarchical attention (HAT) based on: "Hatamizadeh et al.,
-    FasterViT: Fast Vision Transformers with Hierarchical Attention
-    """
-
-    def __init__(
+    def _init_(
         self,
-        dim,  # 256
+        dim,
         num_heads,
         mlp_ratio=4.0,
         qkv_bias=False,
@@ -256,38 +192,11 @@ class HAT(nn.Module):
         ct_size=1,
         do_propagation=False,
     ):
-        super().__init__()
-        """
-        Args:
-            dim: feature size dimension.
-            num_heads: number of attention head.
-            mlp_ratio: MLP ratio.
-            qkv_bias: bool argument for query, key, value learnable bias.
-            qk_scale: bool argument to scaling query, key.
-            drop: dropout rate.
-            attn_drop: attention dropout rate.
-            proj_drop: output dropout rate.
-            act_layer: activation function.
-            norm_layer: normalization layer.
-            sr_ratio: input to window size ratio.
-            window_size: window size.
-            last: last layer flag.
-            layer_scale: layer scale coefficient.
-            ct_size: spatial dimension of carrier token local window.
-            do_propagation: enable carrier token propagation.
-        """
-        # positional encoding for windowed attention tokens
-        print("Inside HAT init")
-        # seq_length : 36 (6x6)
-        self.pos_embed = PosEmbMLPSwinv1D(
-            dim, rank=2, seq_length=window_size**2
-        )  # 256, 2, 36
+        super()._init_()
+        self.pos_embed = PosEmbMLPSwinv1D(dim, rank=2, seq_length=window_size**2)
         self.norm1 = norm_layer(dim)
-        # number of carrier tokens per every window
         cr_tokens_per_window = ct_size**2 if sr_ratio > 1 else 0
-        # total number of carrier tokens
         cr_tokens_total = cr_tokens_per_window * sr_ratio * sr_ratio
-        print("cr_tokens_total: ", cr_tokens_total)
         self.cr_window = ct_size
         self.attn = WindowAttention(
             dim,
@@ -299,7 +208,6 @@ class HAT(nn.Module):
             resolution=window_size,
             seq_length=window_size**2 + cr_tokens_per_window,
         )
-
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
@@ -310,7 +218,6 @@ class HAT(nn.Module):
             drop=drop,
         )
         self.window_size = window_size
-
         use_layer_scale = layer_scale is not None and type(layer_scale) in [int, float]
         self.gamma3 = (
             nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
@@ -318,10 +225,8 @@ class HAT(nn.Module):
         self.gamma4 = (
             nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
         )
-
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:
-            # if do hierarchical attention, this part is for carrier tokens
             self.hat_norm1 = norm_layer(dim)
             self.hat_norm2 = norm_layer(dim)
             self.hat_attn = WindowAttention(
@@ -334,7 +239,6 @@ class HAT(nn.Module):
                 resolution=int(cr_tokens_total**0.5),
                 seq_length=cr_tokens_total,
             )
-
             self.hat_mlp = Mlp(
                 in_features=dim,
                 hidden_features=mlp_hidden_dim,
@@ -344,11 +248,7 @@ class HAT(nn.Module):
             self.hat_drop_path = (
                 DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
             )
-            print("HAT, sr_ratio>1", sr_ratio)
-
-            self.hat_pos_embed = PosEmbMLPSwinv1D(
-                dim, rank=2, seq_length=cr_tokens_total
-            )  # 256, 2, 64
+            self.hat_pos_embed = PosEmbMLPSwinv1D(dim, rank=2, seq_length=ct_size**2)
             self.gamma1 = (
                 nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
             )
@@ -356,67 +256,42 @@ class HAT(nn.Module):
                 nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
             )
             self.upsampler = nn.Upsample(size=window_size, mode="nearest")
-
-        # keep track for the last block to explicitly add carrier tokens to feature maps
         self.last = last
         self.do_propagation = do_propagation
 
     def forward(self, x, carrier_tokens):
-        B, T, N = x.shape
         ct = carrier_tokens
-        print("HAT: ct", ct.shape if ct is not None else None)
         x = self.pos_embed(x)
-        print("HAT, pos_emb(), x:", x.shape)
-        if self.sr_ratio > 1:  # spatial reduction ratio
-            # do hierarchical attention via carrier tokens
-            # first do attention for carrier tokens
-            Bg, Ng, Hg = ct.shape
-
-            # ct are located quite differently
-            print("Inside self.sr_ratio")
-            print("sr_ratio: ", self.sr_ratio)
-            print("cr_window==ct_size: ", self.cr_window)
-
+        if self.sr_ratio > 1:
             ct = ct_dewindow(
                 ct,
-                self.cr_window * self.sr_ratio * factor,  # W
-                self.cr_window * self.sr_ratio,  # H
-                self.cr_window,  # window_size
+                self.cr_window * self.sr_ratio,
+                self.cr_window * self.sr_ratio,
+                self.cr_window,
             )
-            print("ct_dewindow, ct", ct.shape)
-            # positional bias for carrier tokens
-            print("---------HAT_pos_embed------------START----")
-            ct = self.hat_pos_embed(ct)  # issue here ========================
-            print("---------HAT_pos_embed------------END------")
-
-            print("HAT_pos_embed", ct.shape)
-            # attention plus mlp
-            ct = ct + self.hat_drop_path(
-                self.gamma1 * self.hat_attn(self.hat_norm1(ct))
-            )
-            ct = ct + self.hat_drop_path(self.gamma2 * self.hat_mlp(self.hat_norm2(ct)))
-
-            print("Attention+ MLP: ", ct.shape)
-            # ct are put back to windows
+            ct = self.hat_pos_embed(ct)
+            B, C, H, W = ct.shape
+            ct_reshaped = ct.permute(0, 2, 3, 1).reshape(B, -1, C)
+            ct_attended = self.hat_attn(self.hat_norm1(ct_reshaped))
+            ct_attended = ct_attended.reshape(B, H, W, C).permute(0, 3, 1, 2)
+            ct = ct + self.hat_drop_path(self.gamma1 * ct_attended)
+            ct_reshaped = ct.permute(0, 2, 3, 1).reshape(B, -1, C)
+            ct_mlp = self.hat_mlp(self.hat_norm2(ct_reshaped))
+            ct_mlp = ct_mlp.reshape(B, H, W, C).permute(0, 3, 1, 2)
+            ct = ct + self.hat_drop_path(self.gamma2 * ct_mlp)
             ct = ct_window(
                 ct,
-                self.cr_window * self.sr_ratio * factor,  # W
-                self.cr_window * self.sr_ratio,  # H
-                self.cr_window,  # window_size
+                self.cr_window * self.sr_ratio,
+                self.cr_window * self.sr_ratio,
+                self.cr_window,
             )
-            print("ct_window, ct", ct.shape)
-
-            ct = ct.reshape(x.shape[0], -1, N)
-            # concatenate carrier_tokens to the windowed tokens
+            ct = ct.view(ct.shape[0], -1, ct.shape[-1])
+            ct = ct.repeat(x.shape[0] // ct.shape[0], 1, 1)
+            x = x.view(x.shape[0], x.shape[1], -1).transpose(1, 2)
             x = torch.cat((ct, x), dim=1)
-            print("concat, ct+x: ", x.shape)
-
-        # window attention together with carrier tokens
         x = x + self.drop_path(self.gamma3 * self.attn(self.norm1(x)))
         x = x + self.drop_path(self.gamma4 * self.mlp(self.norm2(x)))
-
         if self.sr_ratio > 1:
-            # for hierarchical attention we need to split carrier tokens and window tokens back
             ctr, x = x.split(
                 [
                     x.shape[1] - self.window_size * self.window_size,
@@ -424,78 +299,52 @@ class HAT(nn.Module):
                 ],
                 dim=1,
             )
-            ct = ctr.reshape(Bg, Ng, Hg)  # reshape carrier tokens.
+            total_elements = ctr.numel()
+            Bg = ctr.shape[0]
+            Hg = ctr.shape[-1]
+            Ng = total_elements // (Bg * Hg)
+            ct = ctr.reshape(Bg, Ng, Hg)
             if self.last and self.do_propagation:
-                # propagate carrier token information into the image
                 ctr_image_space = ctr.transpose(1, 2).reshape(
-                    B, N, self.cr_window, self.cr_window
+                    Bg, Hg, int(Ng * 0.5), int(Ng * 0.5)
                 )
                 x = x + self.gamma1 * self.upsampler(
                     ctr_image_space.to(dtype=torch.float32)
                 ).flatten(2).transpose(1, 2).to(dtype=x.dtype)
-        print("HAT Final:", "x:", x.shape, "ct:", ct.shape if ct is not None else None)
         return x, ct
 
 
 class TokenInitializer(nn.Module):
-    """
-    Carrier token Initializer based on: "Hatamizadeh et al.,
-    FasterViT: Fast Vision Transformers with Hierarchical Attention
-    """
-
-    def __init__(self, dim, input_resolution, window_size, ct_size=1):
-        """
-        Args:
-            dim: feature size dimension.
-            input_resolution: input image resolution.
-            window_size: window size.
-            ct_size: spatial dimension of carrier token local window
-        """
-        super().__init__()
-        print("Debug: ", dim, input_resolution, window_size, ct_size)
-        output_size = int(ct_size * input_resolution / window_size)
-        stride_size = int(input_resolution / output_size)
-        kernel_size = input_resolution - (output_size - 1) * stride_size
+    def _init_(self, dim, input_resolution, window_size, ct_size=1):
+        super()._init_()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.window_size = window_size
+        self.ct_size = ct_size
         self.pos_embed = nn.Conv2d(dim, dim, 3, padding=1, groups=dim)
-        to_global_feature = nn.Sequential()
-        to_global_feature.add_module("pos", self.pos_embed)
-        to_global_feature.add_module(
-            "pool", nn.AvgPool2d(kernel_size=kernel_size, stride=stride_size)
+        self.to_global_feature = nn.Sequential(
+            self.pos_embed, nn.AdaptiveAvgPool2d((None, None))
         )
-        self.to_global_feature = to_global_feature
-        self.window_size = ct_size
 
     def forward(self, x):
-        print("Before:", x.shape)  # torch.Size([2, 256, 48, 24])
         x = self.to_global_feature(x)
-        print("After:", x.shape)  # torch.Size([2, 256, 16, 8])
         B, C, H, W = x.shape
         w_size = self.window_size
-
-        # Calculate padding
-        # pad_h = (w_size - H % w_size) % w_size
-        # pad_w = (w_size - W % w_size) % w_size
-
-        # Pad the input tensor
-        # x = nn.functional.pad(x, (0, pad_w, 0, pad_h), mode='replicate')
-
-        # Update H and W after padding
-        # H, W = x.shape[2], x.shape[3]
-
-        ct = x.view(
-            B,
-            C,
-            H // w_size,
-            w_size,
-            W // w_size,
-            w_size,
-        )
-        ct = ct.permute(0, 2, 4, 3, 5, 1).reshape(-1, H * W, C)
+        num_windows_h = H // w_size
+        num_windows_w = W // w_size
+        pad_h = (num_windows_h + 1) * w_size - H if H % w_size != 0 else 0
+        pad_w = (num_windows_w + 1) * w_size - W if W % w_size != 0 else 0
+        if pad_h > 0 or pad_w > 0:
+            x = F.pad(x, (0, pad_w, 0, pad_h))
+            H, W = x.shape[2:]
+        ct = x.view(B, C, H // w_size, w_size, W // w_size, w_size)
+        ct = ct.permute(0, 2, 4, 3, 5, 1).contiguous()
+        ct = ct.view(-1, w_size * w_size, C)
         return ct
 
 
 class PosEmbMLPSwinv2D(nn.Module):
-    def __init__(
+    def _init_(
         self,
         window_size,
         pretrained_window_size,
@@ -504,7 +353,7 @@ class PosEmbMLPSwinv2D(nn.Module):
         ct_correct=False,
         no_log=False,
     ):
-        super().__init__()
+        super()._init_()
         self.window_size = window_size
         self.num_heads = num_heads
         self.cpb_mlp = nn.Sequential(
@@ -523,22 +372,20 @@ class PosEmbMLPSwinv2D(nn.Module):
             .permute(1, 2, 0)
             .contiguous()
             .unsqueeze(0)
-        )  # 1, 2*Wh-1, 2*Ww-1, 2
+        )
         if pretrained_window_size[0] > 0:
             relative_coords_table[:, :, :, 0] /= pretrained_window_size[0] - 1
             relative_coords_table[:, :, :, 1] /= pretrained_window_size[1] - 1
         else:
             relative_coords_table[:, :, :, 0] /= self.window_size[0] - 1
             relative_coords_table[:, :, :, 1] /= self.window_size[1] - 1
-
         if not no_log:
-            relative_coords_table *= 8  # normalize to -8, 8
+            relative_coords_table *= 8
             relative_coords_table = (
                 torch.sign(relative_coords_table)
                 * torch.log2(torch.abs(relative_coords_table) + 1.0)
                 / np.log2(8)
             )
-
         self.register_buffer("relative_coords_table", relative_coords_table)
         coords_h = torch.arange(self.window_size[0])
         coords_w = torch.arange(self.window_size[1])
@@ -568,10 +415,8 @@ class PosEmbMLPSwinv2D(nn.Module):
             return input_tensor
         else:
             self.grid_exists = False
-
         if not self.grid_exists:
             self.grid_exists = True
-
             relative_position_bias_table = self.cpb_mlp(
                 self.relative_coords_table
             ).view(-1, self.num_heads)
@@ -588,7 +433,6 @@ class PosEmbMLPSwinv2D(nn.Module):
             relative_position_bias = 16 * torch.sigmoid(relative_position_bias)
             n_global_feature = input_tensor.shape[2] - local_window_size
             if n_global_feature > 0 and self.ct_correct:
-
                 step_for_ct = self.window_size[0] / (n_global_feature**0.5 + 1)
                 seq_length = int(n_global_feature**0.5)
                 indices = []
@@ -598,7 +442,6 @@ class PosEmbMLPSwinv2D(nn.Module):
                             j + 1
                         ) * step_for_ct
                         indices.append(int(ind))
-
                 top_part = relative_position_bias[:, indices, :]
                 lefttop_part = relative_position_bias[:, indices, :][:, :, indices]
                 left_part = relative_position_bias[:, :, indices]
@@ -616,35 +459,21 @@ class PosEmbMLPSwinv2D(nn.Module):
                 relative_position_bias[:, n_global_feature:, :n_global_feature] = (
                     left_part
                 )
-
             self.pos_emb = relative_position_bias.unsqueeze(0)
             self.relative_bias = self.pos_emb
-
         input_tensor += self.pos_emb
         return input_tensor
 
 
 class PosEmbMLPSwinv1D(nn.Module):
-    def __init__(self, dim, rank=2, seq_length=4, conv=False):
-        super().__init__()
-        print("Inside PosEmbMLPSwinv1D init")
-        print("dim: ", dim, end="")  # 256
-        print(" rank: ", rank, end="")  # 2
-        print(" seq_length: ", seq_length, end="")
-        print(" conv: ", conv)  # False
-        print()
+    def _init_(self, dim, rank=2, seq_length=4, conv=False):
+        super()._init_()
         self.rank = rank
-        if not conv:  # This will run ---------------------
+        if not conv:
             self.cpb_mlp = nn.Sequential(
                 nn.Linear(self.rank, 512, bias=True),
                 nn.ReLU(),
                 nn.Linear(512, dim, bias=False),
-            )
-        else:
-            self.cpb_mlp = nn.Sequential(
-                nn.Conv1d(self.rank, 512, 1, bias=True),
-                nn.ReLU(),
-                nn.Conv1d(512, dim, 1, bias=False),
             )
         self.grid_exists = False
         self.pos_emb = None
@@ -657,81 +486,48 @@ class PosEmbMLPSwinv1D(nn.Module):
         self.deploy = True
 
     def forward(self, input_tensor):
-        print("Inside PosEmbMLPSwinv1D-----------------")
-        print("input_tensor.shape: ", input_tensor.shape)  # torch.Size([2, 128, 256])
-        seq_length = (
-            input_tensor.shape[1] if not self.conv else input_tensor.shape[2]
-        )  # 128
-        print("#####seq_length: ", seq_length)
+        if input_tensor.dim() == 4:
+            b, c, h, w = input_tensor.shape
+            input_tensor = input_tensor.view(b, c, -1).transpose(1, 2)
+        seq_length = input_tensor.shape[1]
         if self.deploy:
             return input_tensor + self.relative_bias
         else:
             self.grid_exists = False
         if not self.grid_exists:
             self.grid_exists = True
-            if self.rank == 1:
-                pass
-                # relative_coords_h = torch.arange(
-                #     0, seq_length, device=input_tensor.device, dtype=input_tensor.dtype
-                # )
-                # relative_coords_h -= seq_length // 2
-                # relative_coords_h /= seq_length // 2
-                # relative_coords_table = relative_coords_h
-                # self.pos_emb = self.cpb_mlp(
-                #     relative_coords_table.unsqueeze(0).unsqueeze(2)
-                # )
-                # self.relative_bias = self.pos_emb
-
-            else:
-                # This will run ---------------------
-                seq_length = int(seq_length**0.5)
-                relative_coords_h = torch.arange(
-                    0, seq_length, device=input_tensor.device, dtype=input_tensor.dtype
-                )
-                relative_coords_w = torch.arange(
-                    0, seq_length, device=input_tensor.device, dtype=input_tensor.dtype
-                )
-                relative_coords_table = (
-                    torch.stack(torch.meshgrid([relative_coords_h, relative_coords_w]))
-                    .contiguous()
-                    .unsqueeze(0)
-                )
-                relative_coords_table -= seq_length // 2
-                relative_coords_table /= seq_length // 2
-                print("relative_coords_table.shape: ", relative_coords_table.shape)
-                if not self.conv:  # This will run ---------------------
-                    self.pos_emb = self.cpb_mlp(
-                        relative_coords_table.flatten(2).transpose(1, 2)
-                    )
-                    print(
-                        "===>self.pos_emb.shape: ", self.pos_emb.shape
-                    )  # torch.Size([2, 121, 256])
-                else:
-                    pass
-                    # self.pos_emb = self.cpb_mlp(relative_coords_table.flatten(2))
-                self.relative_bias = self.pos_emb
-        print("self.pos_emb.shape: ", self.pos_emb.shape)  # torch.Size([1, 121, 256])
-
-        # Calculate the padding needed along the second dimension
-        padding_amount = input_tensor.shape[1] - self.pos_emb.shape[1]  # 128 (target) - 121 (current) = 7
-
-        # Apply replicate padding: (left_pad, right_pad, top_pad, bottom_pad)
-        # We are padding along the second dimension (height), so use (0, 0) for the third dimension (width)
-        pos_emb_padded = nn.functional.pad(self.pos_emb, (0, 0, 0, padding_amount), mode='replicate')
-
+            seq_length_sqrt = int(seq_length**0.5)
+            relative_coords_h = torch.arange(
+                0, seq_length_sqrt, device=input_tensor.device, dtype=input_tensor.dtype
+            )
+            relative_coords_w = torch.arange(
+                0, seq_length_sqrt, device=input_tensor.device, dtype=input_tensor.dtype
+            )
+            relative_coords_table = (
+                torch.stack(torch.meshgrid([relative_coords_h, relative_coords_w]))
+                .contiguous()
+                .unsqueeze(0)
+            )
+            relative_coords_table -= seq_length_sqrt // 2
+            relative_coords_table /= seq_length_sqrt // 2
+            self.pos_emb = self.cpb_mlp(
+                relative_coords_table.flatten(2).transpose(1, 2)
+            )
+            self.relative_bias = self.pos_emb
+        padding_amount = input_tensor.shape[1] - self.pos_emb.shape[1]
+        pos_emb_padded = F.pad(
+            self.pos_emb, (0, 0, 0, padding_amount), mode="replicate"
+        )
         input_tensor = input_tensor + pos_emb_padded
-        # input_tensor = input_tensor + self.pos_emb
-        # print("not adding pos_emb-----------------")
-        print("After input_tensor.shape: ", input_tensor.shape)  # torch.Size([2, 128, 256])
+        if input_tensor.dim() == 3:
+            b, hw, c = input_tensor.shape
+            h = w = int(hw**0.5)
+            input_tensor = input_tensor.transpose(1, 2).view(b, c, h, w)
         return input_tensor
 
 
 class Mlp(nn.Module):
-    """
-    Multi-Layer Perceptron (MLP) block
-    """
-
-    def __init__(
+    def _init_(
         self,
         in_features,
         hidden_features=None,
@@ -739,16 +535,7 @@ class Mlp(nn.Module):
         act_layer=nn.GELU,
         drop=0.0,
     ):
-        """
-        Args:
-            in_features: input features dimension.
-            hidden_features: hidden features dimension.
-            out_features: output features dimension.
-            act_layer: activation function.
-            drop: dropout rate.
-        """
-
-        super().__init__()
+        super()._init_()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
@@ -769,12 +556,7 @@ class Mlp(nn.Module):
 
 
 class FasterViTLayer(nn.Module):
-    """
-    FasterViT layer based on: "Hatamizadeh et al.,
-    FasterViT: Fast Vision Transformers with Hierarchical Attention"
-    """
-
-    def __init__(
+    def _init_(
         self,
         dim,
         depth,
@@ -796,33 +578,10 @@ class FasterViTLayer(nn.Module):
         hierarchy=True,
         do_propagation=False,
     ):
-        """
-        Args:
-            dim: feature size dimension.
-            depth: layer depth.
-            input_resolution: input resolution.
-            num_heads: number of attention head.
-            window_size: window size.
-            ct_size: spatial dimension of carrier token local window.
-            conv: conv_based stage flag.
-            downsample: downsample flag.
-            mlp_ratio: MLP ratio.
-            qkv_bias: bool argument for query, key, value learnable bias.
-            qk_scale: bool argument to scaling query, key.
-            drop: dropout rate.
-            attn_drop: attention dropout rate.
-            drop_path: drop path rate.
-            layer_scale: layer scale coefficient.
-            layer_scale_conv: conv layer scale coefficient.
-            only_local: local attention flag.
-            hierarchy: hierarchical attention flag.
-            do_propagation: enable carrier token propagation.
-        """
-        super().__init__()
+        super()._init_()
         self.conv = conv
         self.transformer_block = False
         if conv:
-            print("conv")
             self.blocks = nn.ModuleList(
                 [
                     ConvBlock(
@@ -837,13 +596,7 @@ class FasterViTLayer(nn.Module):
             )
             self.transformer_block = False
         else:
-            # input_resolution: 24, Window_Size: 6 for now
-
             sr_ratio = input_resolution // window_size if not only_local else 1
-            print("Fn: FasterVitLayer.__init__: input_resolution: ", input_resolution)
-            print("Fn: FasterVitLayer.__init__: window_size: ", window_size)
-            print("Fn: FasterVitLayer.__init__: sr_ratio: ", sr_ratio)
-            print("HAT")
             self.blocks = nn.ModuleList(
                 [
                     HAT(
@@ -868,7 +621,6 @@ class FasterViTLayer(nn.Module):
                 ]
             )
             self.transformer_block = True
-        # self.downsample = None if not downsample else Downsample(dim=dim)
         if (
             len(self.blocks)
             and not only_local
@@ -882,33 +634,23 @@ class FasterViTLayer(nn.Module):
             self.do_gt = True
         else:
             self.do_gt = False
-
         self.window_size = window_size
 
     def forward(self, x):
-        print(f"x.shape: {x.shape}")
         ct = self.global_tokenizer(x) if self.do_gt else None
-        print("global tokenizer, ct: ", ct.shape if ct is not None else None)
         B, C, H, W = x.shape
-        if self.transformer_block:  # Only when Conv=False
+        if self.transformer_block:
             x = window_partition(x, self.window_size)
-            print("window_partition: ", x.shape)
         for bn, blk in enumerate(self.blocks):
             x, ct = blk(x, ct)
-            print("blocks; x: ", x.shape)
-            print("blocks; ct: ", ct.shape if ct is not None else None)
         if self.transformer_block:
             x = window_reverse(x, self.window_size, H, W, B)
-            print("window_reverse: ", x.shape)
-        # if self.downsample is None:
-        #     return x
-        # return self.downsample(x)
         return x
 
 
 class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1):
-        super().__init__()
+    def _init_(self, in_channels, out_channels, stride=1):
+        super()._init_()
         self.conv1 = nn.Conv2d(
             in_channels, out_channels, kernel_size=3, padding=1, stride=stride
         )
@@ -916,7 +658,6 @@ class ResBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
         self.norm2 = nn.BatchNorm2d(out_channels)
-
         self.shortcut = nn.Sequential()
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
@@ -925,28 +666,33 @@ class ResBlock(nn.Module):
             )
 
     def forward(self, x):
-        out = self.relu(self.norm1(self.conv1(x)))
-        out = self.norm2(self.conv2(out))
-        out += self.shortcut(x)
+        x1 = self.conv1(x)
+        x2 = self.norm1(x1)
+        x3 = self.relu(x2)
+        out = x3
+        x4 = self.conv2(out)
+        x5 = self.norm2(x4)
+        out = x5
+        x_shortcut = self.shortcut(x)
+        out += x_shortcut
         return out
 
 
 class FastEncoder(nn.Module):
-    def __init__(
+    def _init_(
         self,
-        feature_dim_s16,  # 128
-        context_dim_s16,  # 64
-        feature_dim_s8,  # 128
-        context_dim_s8,  # 64
-        dim=64,  # don't know =============================================
-        in_dim=64,  # don't know ===========================================
+        feature_dim_s16,
+        context_dim_s16,
+        feature_dim_s8,
+        context_dim_s8,
+        dim=64,
+        in_dim=64,
         depths=[2, 3, 6],
         window_size=[6, 6, 6],
-        # window_size=[7, 7, 7],
         ct_size=2,
         mlp_ratio=4,
         num_heads=[2, 4, 8],
-        resolution=224,  # 384
+        resolution=224,
         drop_path_rate=0.2,
         in_chans=3,
         qkv_bias=True,
@@ -956,46 +702,42 @@ class FastEncoder(nn.Module):
         layer_scale=None,
         layer_scale_conv=None,
         layer_norm_last=False,
-        # hat=None,
         hat=[False, False, True],
         do_propagation=False,
-        **kwargs,
+        **kwargs
     ):
-        super().__init__()
+        super()._init_()
         num_features = int(dim * 2 ** (len(depths) - 1))
         self.patch_embed = PatchEmbed(in_chans=in_chans, in_dim=in_dim, dim=dim)
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
         self.levels = nn.ModuleList()
         if hat is None:
-            print("hat is None")
             hat = [True] * len(depths)
-
         self.res_x8 = ResBlock(feature_dim_s8, feature_dim_s8 + context_dim_s8)
         self.res_x16 = ResBlock(feature_dim_s16 * 2, feature_dim_s16 + context_dim_s16)
         self.downsample_1 = Downsample(dim)
         self.downsample_2 = Downsample(dim * 2)
-
         for i in range(len(depths)):
             conv = True if (i == 0 or i == 1) else False
             level = FasterViTLayer(
-                dim=int(dim * 2**i),  # 64, 128, 256
-                depth=depths[i],  # 2, 3, 6
-                num_heads=num_heads[i],  # 2, 4, 8
-                window_size=window_size[i],  # 7, 7, 7
-                ct_size=ct_size,  # 2
+                dim=int(dim * 2**i),
+                depth=depths[i],
+                num_heads=num_heads[i],
+                window_size=window_size[i],
+                ct_size=ct_size,
                 mlp_ratio=mlp_ratio,
                 qkv_bias=qkv_bias,
                 qk_scale=qk_scale,
-                conv=conv,  # True, True, False
+                conv=conv,
                 drop=drop_rate,
                 attn_drop=attn_drop_rate,
                 drop_path=dpr[sum(depths[:i]) : sum(depths[: i + 1])],
-                downsample=(i < 3),  # True, True, True
+                downsample=(i < 3),
                 layer_scale=layer_scale,
                 layer_scale_conv=layer_scale_conv,
-                input_resolution=int(2 ** (-2 - i) * resolution),  # 96, 48, 24
-                only_local=not hat[i],  # True, True, False
-                do_propagation=do_propagation,  # False
+                input_resolution=int(2 ** (-2 - i) * resolution),
+                only_local=not hat[i],
+                do_propagation=do_propagation,
             )
             self.levels.append(level)
 
@@ -1019,18 +761,13 @@ class FastEncoder(nn.Module):
 
     def forward(self, img):
         x = self.patch_embed(img)
-        print("patch embed: ", x.shape)
-
         x = self.levels[0](x)
         x = self.downsample_1(x)
         x = self.levels[1](x)
-
         x8 = self.res_x8(x)
-
         x = self.downsample_2(x)
         x = self.levels[2](x)
-        x16 = self.res_x16(x)  # Apply ResBlock for x16
-
+        x16 = self.res_x16(x)
         return x16, x8
 
 
