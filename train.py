@@ -1,3 +1,4 @@
+import wandb
 import torch
 from torch.utils.data import DataLoader
 
@@ -135,19 +136,24 @@ def main(args):
 
     counter = 0
 
+
+    # Initialize WandB run
+    wandb.init(project="flow_estimation_project", config=args)
+
+    counter = 0
+    epoch = 0
+
     while total_steps < args.num_steps:
         model.train()
 
-        # mannual change random seed for shuffling every epoch
+        # Manual change random seed for shuffling every epoch
         if args.distributed:
             train_sampler.set_epoch(epoch)
 
         for i, sample in enumerate(train_loader):
-
             optimizer.zero_grad()
 
             img1, img2, flow_gt, valid = [x.to(device) for x in sample]
-
             img1 = img1.half()
             img2 = img2.half()
 
@@ -160,34 +166,41 @@ def main(args):
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
 
+            # Check for bad gradients
             bad_grad = False
             for name, param in model.named_parameters():
                 if not torch.all(torch.isfinite(param.grad)):
                     bad_grad = True
                 if bad_grad:
                     print(name, param.grad.mean().item())
-                # print(name, torch.max(torch.abs(param.grad)).item())
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
             scaler.step(optimizer)
-
             scaler.update()
+
+            # Log metrics to WandB
+            wandb.log({
+                'step': total_steps,
+                'loss': loss.item(),
+                'epe': metrics['epe'],
+                'mag': metrics['mag'],
+                'learning_rate': optimizer.param_groups[-1]['lr']
+            })
 
             print(total_steps, round(metrics['epe'], 3), round(metrics['mag'], 3), optimizer.param_groups[-1]['lr'])
 
             total_steps += 1
 
+            # Validation and checkpoint saving
             if total_steps % args.val_freq == 0:
-
                 if args.local_rank == 0:
                     checkpoint_path = os.path.join(args.checkpoint_dir, 'step_%06d.pth' % total_steps)
-                    torch.save({
-                        'model': model_without_ddp.state_dict()
-                    }, checkpoint_path)
+                    torch.save({'model': model_without_ddp.state_dict()}, checkpoint_path)
+
+                    # Log checkpoint to WandB
+                    wandb.save(checkpoint_path)
 
                 val_results = {}
-
                 if 'things' in args.val_dataset:
                     test_results_dict = validate_things(model_without_ddp, device, dstype='frames_cleanpass', validate_subset=True)
                     if args.local_rank == 0:
@@ -209,29 +222,27 @@ def main(args):
                         val_results.update(test_results_dict)
 
                 if args.local_rank == 0:
-
                     counter += 1
-
                     if counter >= 10:
-
                         for group in optimizer.param_groups:
                             group['lr'] *= 0.8
-
                         counter = 0
 
                     # Save validation results
                     val_file = os.path.join(args.checkpoint_dir, 'val_results.txt')
                     with open(val_file, 'a') as f:
                         f.write('step: %06d lr: %.6f\n' % (total_steps, optimizer.param_groups[-1]['lr']))
-
                         for k, v in val_results.items():
                             f.write("| %s: %.3f " % (k, v))
-
                         f.write('\n\n')
+
+                    # Log validation metrics to WandB
+                    wandb.log(val_results)
 
                 model.train()
 
         epoch += 1
+
 
 
 if __name__ == '__main__':
