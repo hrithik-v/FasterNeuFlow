@@ -943,5 +943,5 @@ if __name__ == "__main__":
     # print(x.shape)
     x16, x8 = model(x)
 
-    # print(x16.shape)
-    # print(x8.shape)
+    print(x16.shape)
+    print(x8.shape)
