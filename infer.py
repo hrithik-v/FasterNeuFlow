@@ -75,7 +75,7 @@ for m in model.modules():
 model.eval()
 
 
-model.init_bhwd(1, image_height, image_width, 'cuda', amp=False)
+model.init_bhwd(1, image_height, image_width, device, amp=False)
 
 
 test_img = torch.rand(1, 3, 224, 224).to(device)
