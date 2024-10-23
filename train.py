@@ -187,7 +187,7 @@ def main(args):
                 'learning_rate': optimizer.param_groups[-1]['lr']
             })
 
-            print(total_steps, round(metrics['epe'], 3), round(metrics['mag'], 3), optimizer.param_groups[-1]['lr'])
+            print("\rTotal Steps:", total_steps, "EPE: ", round(metrics['epe'], 3), "Mag", round(metrics['mag'], 3), "lr:", optimizer.param_groups[-1]['lr'], end="")
 
             total_steps += 1
 
