@@ -843,6 +843,7 @@ class ResBlock(nn.Module):
         out += self.shortcut(x)
         return out
 
+from torchvision.models import efficientnet_b0
 class FastEncoder(nn.Module):
     def __init__(
         self,
@@ -885,7 +886,11 @@ class FastEncoder(nn.Module):
         self.downsample_2 = Downsample(dim*2)
 
         for i in range(len(depths)):
-            conv = True if (i == 0 or i == 1) else False
+            if (i == 0):
+                self.levels.append(None)
+                continue
+            
+            conv = True if (i == 1) else False
             level = FasterViTLayer(
                 dim=int(dim * 2**i),
                 depth=depths[i],
@@ -907,6 +912,31 @@ class FastEncoder(nn.Module):
                 do_propagation=do_propagation,
             )
             self.levels.append(level)
+         
+        efficientnet = efficientnet_b0(pretrained=True)
+        
+        # Create a sequential model with early layers and the custom convolution
+        self.effiNet = nn.Sequential(
+            *efficientnet.features[:3],  # First 3 blocks of EfficientNet-b0
+            nn.Conv2d(
+                in_channels=24,  # Output channels from the third block
+                out_channels=128, 
+                kernel_size=3, 
+                stride=1, 
+                padding=1
+            )
+        )
+        
+        # Modify the first convolution to accept input with 64 channels
+        self.effiNet[0][0] = nn.Conv2d(
+            in_channels=64, 
+            out_channels=32, 
+            kernel_size=3, 
+            stride=1,  # Keep stride as 1 to maintain spatial size
+            padding=1, 
+            bias=False
+        )
+
 
     def init_pos(self, batch_size, height, width, device, amp):
         ys, xs = torch.meshgrid(torch.arange(height, dtype=torch.half if amp else torch.float, device=device), torch.arange(width, dtype=torch.half if amp else torch.float, device=device), indexing='ij')
@@ -919,29 +949,33 @@ class FastEncoder(nn.Module):
         self.pos_s16 = self.init_pos(batch_size, height, width, device, amp)
 
     def forward(self, img):
-        x = self.patch_embed(img)
-        # print("patch embed: ", x.shape)
+        x = self.patch_embed(img)   # torch.Size([2, 64, 56, 56])
 
-        x = self.downsample_1(x)
-        x = self.levels[1](x)
-        # print("A", x.shape) # torch.Size([2, 128, 28, 28])
-        x8 = self.res_x8(x) 
-        # print("B")
+        # EfficientNet
+        x = self.effiNet(x) # torch.Size([2, 128, 28, 28])
+        x8 = self.res_x8(x) # torch.Size([2, 192, 28, 28])
 
         x = self.downsample_2(x)
-        x = self.levels[2](x)
-        x16 = self.res_x16(x)  # Apply ResBlock for x16
+
+        # HAN
+        x = self.levels[2](x)   # torch.Size([2, 256, 14, 14])
+        x16 = self.res_x16(x) 
+        print("x16: ", x16.shape) 
 
         return x16, x8
 
-
+from torchinfo import summary
 if __name__ == "__main__":
     model = FastEncoder(128, 64, 128, 64)
-    # print("Model initialized")
+    # Summary of the model
+    # print(model)
+    summary(model)
 
+    # print("Model initialized")
     x = torch.rand([2,3,224,224])
     # print(x.shape)
     x16, x8 = model(x)
 
+""" 
     print(x16.shape)
-    print(x8.shape)
+    print(x8.shape) """
