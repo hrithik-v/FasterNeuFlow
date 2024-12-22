@@ -151,13 +151,13 @@ class MpiSintel(FlowDataset):
             self.is_test = True
 
         for scene in os.listdir(image_root):
-            image_list = sorted(glob(osp.join(image_root, scene, '*.npy')))
+            image_list = sorted(glob(osp.join(image_root, scene, '*.png')))
             for i in range(len(image_list) - 1):
                 self.image_list += [[image_list[i], image_list[i + 1]]]
                 self.extra_info += [(scene, i)]  # scene and frame_id
 
             if split != 'test':
-                self.flow_list += sorted(glob(osp.join(flow_root, scene, '*.npy')))
+                self.flow_list += sorted(glob(osp.join(flow_root, scene, '*.flo')))
 
                 if load_occlusion:
                     self.occ_list += sorted(glob(osp.join(occlusion_root, scene, '*.png')))
@@ -215,8 +215,8 @@ class FlyingThings3D(FlowDataset):
                 flow_dirs = sorted([osp.join(f, direction, cam) for f in flow_dirs])
 
                 for idir, fdir in zip(image_dirs, flow_dirs):
-                    images = sorted(glob(osp.join(idir, '*.npy')))
-                    flows = sorted(glob(osp.join(fdir, '*.npy')))
+                    images = sorted(glob(osp.join(idir, '*.png')))
+                    flows = sorted(glob(osp.join(fdir, '*.pfm')))
                     for i in range(len(flows) - 1):
                         if direction == 'into_future':
                             self.image_list += [[images[i], images[i + 1]]]
@@ -247,8 +247,8 @@ class KITTI(FlowDataset):
             self.is_test = True
 
         root = osp.join(root, split)
-        images1 = sorted(glob(osp.join(root, 'image_2/*_10.npy')))
-        images2 = sorted(glob(osp.join(root, 'image_2/*_11.npy')))
+        images1 = sorted(glob(osp.join(root, 'image_2/*_10.png')))
+        images2 = sorted(glob(osp.join(root, 'image_2/*_11.png')))
 
         for img1, img2 in zip(images1, images2):
             frame_id = img1.split('/')[-1]
@@ -266,7 +266,7 @@ class HD1K(FlowDataset):
         seq_ix = 0
         while 1:
             flows = sorted(glob(os.path.join(root, 'hd1k_flow_gt', 'flow_occ/%06d_*.png' % seq_ix)))
-            images = sorted(glob(os.path.join(root, 'hd1k_input', 'image_2/%06d_*.npy' % seq_ix)))
+            images = sorted(glob(os.path.join(root, 'hd1k_input', 'image_2/%06d_*.png' % seq_ix)))
 
             if len(flows) == 0:
                 break
