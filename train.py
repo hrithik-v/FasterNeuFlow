@@ -169,10 +169,12 @@ def main(args):
             # Check for bad gradients
             bad_grad = False
             for name, param in model.named_parameters():
-                if not torch.all(torch.isfinite(param.grad)):
+                if param.grad is not None and not torch.all(torch.isfinite(param.grad)):
                     bad_grad = True
-                if bad_grad:
                     print(name, param.grad.mean().item())
+
+            if bad_grad:
+                print("Bad gradients detected.")
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
