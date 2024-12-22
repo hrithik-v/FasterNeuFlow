@@ -12,9 +12,12 @@ class SAConvMixer(torch.nn.Module):
                 torch.nn.GELU()
             ) for _ in range(depth)]
         )
+        self.residual_scale = 0.5  # Scale for residual connection
 
     def forward(self, x):
-        return self.layers(x)
+        residual = x
+        x = self.layers(x)
+        return x + self.residual_scale * residual  # Add residual connection
 
 class UpSample(torch.nn.Module):
     def __init__(self, feature_dim, upsample_factor, sa_conv_depth=4):
@@ -25,10 +28,18 @@ class UpSample(torch.nn.Module):
         self.conv1 = torch.nn.Conv2d(2 + feature_dim, 256, 3, 1, 1)
         self.sa_conv_mixer = SAConvMixer(256, sa_conv_depth)
         self.conv2 = torch.nn.Conv2d(256, upsample_factor ** 2 * 9, 1, 1, 0)
-        self.relu = torch.nn.ReLU(inplace=True)
+        self.relu = torch.nn.ReLU()
 
         # Additional layer for convex weights
         self.convex_weights = torch.nn.Conv2d(256, upsample_factor ** 2 * 9, 1, 1, 0)
+
+        # Initialize weights
+        torch.nn.init.kaiming_normal_(self.conv1.weight, nonlinearity='relu')
+        torch.nn.init.constant_(self.conv1.bias, 0)
+        torch.nn.init.kaiming_normal_(self.conv2.weight, nonlinearity='relu')
+        torch.nn.init.constant_(self.conv2.bias, 0)
+        torch.nn.init.kaiming_normal_(self.convex_weights.weight, nonlinearity='relu')
+        torch.nn.init.constant_(self.convex_weights.bias, 0)
 
     def forward(self, feature, flow):
         concat = torch.cat((flow, feature), dim=1)
@@ -42,7 +53,7 @@ class UpSample(torch.nn.Module):
 
         # Reshape and normalize weights for convex combination
         convex_weights = convex_weights.view(b, 1, 9, self.upsample_factor, self.upsample_factor, h, w)
-        convex_weights = torch.softmax(convex_weights, dim=2)
+        convex_weights = torch.softmax(convex_weights, dim=2) + 1e-8  # Add epsilon for stability
 
         # Unfold flow and apply convex upsampling
         unfolded_flow = F.unfold(flow, [3, 3], padding=1)
