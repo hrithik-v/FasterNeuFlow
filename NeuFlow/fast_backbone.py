@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 import numpy as np
 from timm.models.layers import trunc_normal_, DropPath, LayerNorm2d
+from timm.models.vision_transformer import Mlp, PatchEmbed
+from torchvision import transforms  
+
+
+
 
 
 def window_partition(x, window_size):
@@ -914,28 +919,30 @@ class FastEncoder(nn.Module):
             self.levels.append(level)
          
         efficientnet = efficientnet_b0(pretrained=True)
-        
-        # Create a sequential model with early layers and the custom convolution
         self.effiNet = nn.Sequential(
-            *efficientnet.features[:3],  # First 3 blocks of EfficientNet-b0
-            nn.Conv2d(
-                in_channels=24,  # Output channels from the third block
-                out_channels=128, 
-                kernel_size=3, 
-                stride=1, 
-                padding=1
-            )
+            *efficientnet.features[:3],
+            nn.Conv2d(24, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),  # Added BatchNorm for stability
+            nn.ReLU(inplace=True),  # Ensure non-linearity is applied
         )
-        
-        # Modify the first convolution to accept input with 64 channels
+
+        # Modify the first convolution
         self.effiNet[0][0] = nn.Conv2d(
             in_channels=64, 
             out_channels=32, 
             kernel_size=3, 
-            stride=1,  # Keep stride as 1 to maintain spatial size
+            stride=1, 
             padding=1, 
             bias=False
         )
+
+        # Initialize new layers
+        # nn.init.kaiming_normal_(self.effiNet[1].weight, mode='fan_out', nonlinearity='relu')
+
+        self.normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+
+
 
 
     def init_pos(self, batch_size, height, width, device, amp):
@@ -949,19 +956,24 @@ class FastEncoder(nn.Module):
         self.pos_s16 = self.init_pos(batch_size, height, width, device, amp)
 
     def forward(self, img):
-        x = self.patch_embed(img)   # torch.Size([2, 64, 56, 56])
+        x = self.normalize(img)
+        print("After Normalize: ", img.shape, f"range: {x.min()} - {x.max()}")
+        x = self.patch_embed(x)   # torch.Size([2, 64, 56, 56])
+        print("After PatchEmbed x: ", x.shape, f"range: {x.min()} - {x.max()}")
 
         # EfficientNet
         x = self.effiNet(x) # torch.Size([2, 128, 28, 28])
+        print("After EffiNet: ", x.shape, f"range: {x.min()} - {x.max()}")
         x8 = self.res_x8(x) # torch.Size([2, 192, 28, 28])
+        print("After res_x8: ", x.shape, f"range: {x.min()} - {x.max()}")
 
         x = self.downsample_2(x)
 
         # HAN
         x = self.levels[2](x)   # torch.Size([2, 256, 14, 14])
         x16 = self.res_x16(x) 
-        print("x16: ", x16.shape) 
-
+        print("x16: ", x16.shape, f"range: {x16.min()} - {x16.max()}")
+        
         return x16, x8
 
 from torchinfo import summary

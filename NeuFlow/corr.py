@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import math
+from NeuFlow.debug import fprint
 
 from NeuFlow import utils
 
@@ -59,9 +60,21 @@ class CorrBlock:
         b, c, h, w = feature0.shape
         feature0 = feature0.view(b, c, h*w)
         feature1 = feature1.view(b, c, h*w)
-        
+
+        # Normalize the feature maps
+        feature0 = (feature0 - feature0.mean(dim=-1, keepdim=True)) / feature0.std(dim=-1, keepdim=True)
+        feature1 = (feature1 - feature1.mean(dim=-1, keepdim=True)) / feature1.std(dim=-1, keepdim=True)
+
+        # Compute correlation
         corr = torch.matmul(feature0.transpose(1,2), feature1)
+        
+        # Normalize correlation values using L2 norm or other methods if necessary
+        corr = corr / (torch.norm(corr, p=2, dim=-1, keepdim=True) + 1e-8)
+
         corr = corr.view(b*h*w, 1, h, w) / math.sqrt(c)
+
+        # Apply softmax to stabilize the values (optional)
+        corr = F.softmax(corr, dim=-1)
 
         corr_pyramid = [corr]
         for i in range(self.levels-1):
@@ -69,6 +82,7 @@ class CorrBlock:
             corr_pyramid.append(corr)
 
         return corr_pyramid
+
 
 
 # class RAFTCorrBlock:
@@ -120,3 +134,19 @@ class CorrBlock:
 #         corr = torch.matmul(fmap1.transpose(1,2), fmap2)
 #         corr = corr.view(batch, ht, wd, 1, ht, wd)
 #         return corr  / torch.sqrt(torch.tensor(dim).float())
+
+
+if __name__ == "__main__":
+    # Test CorrBlock
+    corr_block = CorrBlock(radius=4, levels=4)
+    corr_block.init_bhwd(1, 14,14, 'cpu', False)
+    feature0 = torch.randn(1, 128, 14, 14 )
+    feature1 = torch.randn(1, 128, 14, 14)
+    corr_pyramid = corr_block.init_corr_pyr(feature0, feature1)
+    fprint("Corr Pyramid: ", [(x.shape, x.min(), x.max()) for x in corr_pyramid])
+
+    flow = torch.randn(1, 2, 14, 14)
+    out = corr_block(corr_pyramid, flow)
+    fprint("Output: ", out.shape)
+    fprint("Range: ", out.min(), out.max())
+    fprint("Successful")
