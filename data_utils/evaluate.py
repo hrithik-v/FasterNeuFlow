@@ -25,8 +25,8 @@ def validate_chairs(model, device):
     for val_id in range(len(val_dataset)):
         image1, image2, flow_gt, _ = val_dataset[val_id]
 
-        image1 = image1.half()
-        image2 = image2.half()
+        image1 = image1.float()
+        image2 = image2.float()
 
         image1 = image1[None].to(device)
         image2 = image2[None].to(device)
@@ -71,8 +71,8 @@ def validate_things(model,
     for val_id in range(len(val_dataset)):
         image1, image2, flow_gt, valid_gt = val_dataset[val_id]
 
-        image1 = image1.half()
-        image2 = image2.half()
+        image1 = image1.float()
+        image2 = image2.float()
 
         image1 = image1[None].to(device)
         image2 = image2[None].to(device)
@@ -126,8 +126,8 @@ def validate_sintel(model,
         
         image1, image2, flow_gt, _ = val_dataset[val_id]
 
-        image1 = image1.half()
-        image2 = image2.half()
+        image1 = image1.float()
+        image2 = image2.float()
 
         image1 = image1[None].to(device)
         image2 = image2[None].to(device)
@@ -178,8 +178,8 @@ def validate_kitti(model,
     for val_id in range(len(val_dataset)):
         image1, image2, flow_gt, valid_gt = val_dataset[val_id]
 
-        image1 = image1.half()
-        image2 = image2.half()
+        image1 = image1.float()
+        image2 = image2.float()
 
         image1 = image1[None].to(device)
         image2 = image2[None].to(device)
@@ -235,8 +235,8 @@ def create_kitti_submission(model, device, output_path='datasets/kitti_submissio
     for test_id in range(len(test_dataset)):
         image1, image2, (frame_id,) = test_dataset[test_id]
 
-        image1 = image1.half()
-        image2 = image2.half()
+        image1 = image1.float()
+        image2 = image2.float()
 
         padder = frame_utils.InputPadder(image1.shape, mode='kitti', padding_factor=padding_factor)
         image1_pad, image2_pad = padder.pad(image1[None].to(device), image2[None].to(device))
@@ -275,8 +275,8 @@ def validate_viper(model,device,
     for val_id in range(len(val_dataset)):
         image1, image2, flow_gt, valid_gt = val_dataset[val_id]
 
-        image1 = image1.half()
-        image2 = image2.half()
+        image1 = image1.float()
+        image2 = image2.float()
 
         image1 = image1[None].to(device)
         image2 = image2[None].to(device)

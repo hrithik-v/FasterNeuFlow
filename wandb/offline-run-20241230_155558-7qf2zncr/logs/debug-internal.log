@@ -1,0 +1,50 @@
+2024-12-30 15:55:58,197 INFO    StreamThr :239248 [internal.py:wandb_internal():86] W&B internal server running at pid: 239248, started at: 2024-12-30 15:55:58.195749
+2024-12-30 15:55:58,201 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: status
+2024-12-30 15:55:58,204 INFO    WriterThread:239248 [datastore.py:open_for_write():87] open: /media/anil/hdd2/nihal/hrithik/wandb/offline-run-20241230_155558-7qf2zncr/run-7qf2zncr.wandb
+2024-12-30 15:55:58,292 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: run_start
+2024-12-30 15:55:58,313 DEBUG   HandlerThread:239248 [system_info.py:__init__():26] System info init
+2024-12-30 15:55:58,313 DEBUG   HandlerThread:239248 [system_info.py:__init__():41] System info init done
+2024-12-30 15:55:58,313 INFO    HandlerThread:239248 [system_monitor.py:start():194] Starting system monitor
+2024-12-30 15:55:58,314 INFO    SystemMonitor:239248 [system_monitor.py:_start():158] Starting system asset monitoring threads
+2024-12-30 15:55:58,314 INFO    HandlerThread:239248 [system_monitor.py:probe():214] Collecting system info
+2024-12-30 15:55:58,315 INFO    SystemMonitor:239248 [interfaces.py:start():190] Started cpu monitoring
+2024-12-30 15:55:58,317 INFO    SystemMonitor:239248 [interfaces.py:start():190] Started disk monitoring
+2024-12-30 15:55:58,319 INFO    SystemMonitor:239248 [interfaces.py:start():190] Started gpu monitoring
+2024-12-30 15:55:58,321 INFO    SystemMonitor:239248 [interfaces.py:start():190] Started memory monitoring
+2024-12-30 15:55:58,322 INFO    SystemMonitor:239248 [interfaces.py:start():190] Started network monitoring
+2024-12-30 15:55:58,345 DEBUG   HandlerThread:239248 [system_info.py:probe():150] Probing system
+2024-12-30 15:55:58,357 DEBUG   HandlerThread:239248 [system_info.py:_probe_git():135] Probing git
+2024-12-30 15:55:58,387 DEBUG   HandlerThread:239248 [system_info.py:_probe_git():143] Probing git done
+2024-12-30 15:55:58,387 DEBUG   HandlerThread:239248 [system_info.py:probe():198] Probing system done
+2024-12-30 15:55:58,387 DEBUG   HandlerThread:239248 [system_monitor.py:probe():223] {'os': 'Linux-6.5.0-18-generic-x86_64-with-glibc2.17', 'python': '3.8.20', 'heartbeatAt': '2024-12-30T10:25:58.345702', 'startedAt': '2024-12-30T10:25:58.180270', 'docker': None, 'cuda': None, 'args': ('--checkpoint_dir', './checkpoints', '--stage', 'chairs', '--val_dataset', 'chairs', '--batch_size', '16', '--num_workers', '4', '--lr', '1e-4', '--val_freq', '1000'), 'state': 'running', 'program': 'train.py', 'codePathLocal': 'train.py', 'codePath': 'train.py', 'git': {'remote': 'https://github.com/hrithik-v/FasterNeuFlow.git', 'commit': '69e6fd8e82698a047009ca52aaa03e090d38466c'}, 'email': None, 'root': '/media/anil/hdd2/nihal/hrithik', 'host': 'anil-Precision-7920-Tower1', 'username': 'anil', 'executable': '/home/anil/miniconda3/envs/fastneuflow/bin/python', 'cpu_count': 20, 'cpu_count_logical': 40, 'cpu_freq': {'current': 947.4522499999999, 'min': 800.0, 'max': 3000.0}, 'cpu_freq_per_core': [{'current': 799.688, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 810.875, 'min': 800.0, 'max': 3000.0}, {'current': 917.728, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 819.199, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 2772.928, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 2798.791, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 819.271, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 864.051, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 832.012, 'min': 800.0, 'max': 3000.0}, {'current': 2799.777, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 2783.609, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 2451.87, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}, {'current': 800.08, 'min': 800.0, 'max': 3000.0}, {'current': 2332.451, 'min': 800.0, 'max': 3000.0}, {'current': 800.0, 'min': 800.0, 'max': 3000.0}], 'disk': {'/': {'total': 1832.2072448730469, 'used': 264.03305435180664}}, 'gpu': 'NVIDIA TITAN RTX', 'gpu_count': 2, 'gpu_devices': [{'name': 'NVIDIA TITAN RTX', 'memory_total': 25769803776}, {'name': 'NVIDIA TITAN RTX', 'memory_total': 25769803776}], 'memory': {'total': 62.53158950805664}}
+2024-12-30 15:55:58,387 INFO    HandlerThread:239248 [system_monitor.py:probe():224] Finished collecting system info
+2024-12-30 15:55:58,387 INFO    HandlerThread:239248 [system_monitor.py:probe():227] Publishing system info
+2024-12-30 15:55:58,387 DEBUG   HandlerThread:239248 [system_info.py:_save_conda():207] Saving list of conda packages installed into the current environment
+2024-12-30 15:56:00,231 DEBUG   HandlerThread:239248 [system_info.py:_save_conda():222] Saving conda packages done
+2024-12-30 15:56:00,234 INFO    HandlerThread:239248 [system_monitor.py:probe():229] Finished publishing system info
+2024-12-30 15:56:00,407 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: python_packages
+2024-12-30 15:56:03,210 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: status_report
+2024-12-30 15:56:03,230 DEBUG   SenderThread:239248 [sender.py:send_request():406] send_request: status_report
+2024-12-30 15:56:08,249 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: status_report
+2024-12-30 15:56:08,255 DEBUG   SenderThread:239248 [sender.py:send_request():406] send_request: status_report
+2024-12-30 15:56:13,259 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: status_report
+2024-12-30 15:56:13,363 DEBUG   SenderThread:239248 [sender.py:send_request():406] send_request: status_report
+2024-12-30 15:56:16,419 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: partial_history
+2024-12-30 15:56:17,026 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: partial_history
+2024-12-30 15:56:17,651 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: partial_history
+2024-12-30 15:56:18,422 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: status_report
+2024-12-30 15:56:18,456 DEBUG   SenderThread:239248 [sender.py:send_request():406] send_request: status_report
+2024-12-30 15:56:18,784 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: partial_history
+2024-12-30 15:56:23,444 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: partial_history
+2024-12-30 15:56:23,501 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: status_report
+2024-12-30 15:56:23,776 DEBUG   SenderThread:239248 [sender.py:send_request():406] send_request: status_report
+2024-12-30 15:56:24,327 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: partial_history
+2024-12-30 15:56:25,438 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: partial_history
+2024-12-30 15:56:26,539 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: partial_history
+2024-12-30 15:56:28,793 DEBUG   HandlerThread:239248 [handler.py:handle_request():146] handle_request: status_report
+2024-12-30 15:56:28,819 DEBUG   SenderThread:239248 [sender.py:send_request():406] send_request: status_report
+2024-12-30 15:56:32,355 INFO    memory    :239248 [interfaces.py:monitor():140] Process proc.memory.rssMB has exited.
+2024-12-30 15:56:32,356 DEBUG   SystemMonitor:239248 [system_monitor.py:_start():172] Starting system metrics aggregation loop
+2024-12-30 15:56:32,357 DEBUG   SystemMonitor:239248 [system_monitor.py:_start():179] Finished system metrics aggregation loop
+2024-12-30 15:56:32,358 DEBUG   SystemMonitor:239248 [system_monitor.py:_start():183] Publishing last batch of metrics
+2024-12-30 15:56:33,261 INFO    MainThread:239248 [internal.py:handle_exit():76] Internal process exited

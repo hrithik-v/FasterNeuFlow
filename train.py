@@ -11,6 +11,7 @@ from loss import flow_loss_func
 from data_utils.evaluate import validate_things, validate_sintel, validate_kitti, validate_viper
 from load_model import my_load_weights, my_freeze_model
 from dist_utils import get_dist_info, init_dist, setup_for_distributed
+from NeuFlow.debug import *
 
 
 def get_args_parser():
@@ -44,7 +45,7 @@ def get_args_parser():
 
 def main(args):
     # torch.autograd.set_detect_anomaly(True)
-    print('Use %d GPUs' % torch.cuda.device_count())
+    fprint('Use %d GPUs' % torch.cuda.device_count())
     # seed = args.seed
     # torch.manual_seed(seed)
     # np.random.seed(seed)
@@ -82,7 +83,7 @@ def main(args):
         model_without_ddp = model
 
     num_params = sum(p.numel() for p in model.parameters())
-    print('Number of params:', num_params)
+    fprint('Number of params:', num_params)
 
     scaler = torch.cuda.amp.GradScaler()
     optimizer = torch.optim.AdamW(model_without_ddp.parameters(), lr=args.lr,
@@ -99,14 +100,14 @@ def main(args):
         my_freeze_model(model)
 
         # for name, param in model.named_parameters():
-        #     print(name, param.requires_grad)
+        #     fprint(name, param.requires_grad)
 
         torch.save({
             'model': model_without_ddp.state_dict()
         }, os.path.join(args.checkpoint_dir, 'step_0.pth'))
 
     train_dataset = build_train_dataset(args.stage)
-    print('Number of training images:', len(train_dataset))
+    fprint('Number of training images:', len(train_dataset))
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -138,13 +139,14 @@ def main(args):
 
 
     # Initialize WandB run
-    wandb.init(project="flow_estimation_project", config=args)
+    # wandb.init(project="flow_estimation_project", config=args)
 
     counter = 0
     epoch = 0
 
     while total_steps < args.num_steps:
         model.train()
+
 
         # Manual change random seed for shuffling every epoch
         if args.distributed:
@@ -154,12 +156,12 @@ def main(args):
             optimizer.zero_grad()
 
             img1, img2, flow_gt, valid = [x.to(device) for x in sample]
-            img1 = img1.half()
-            img2 = img2.half()
+            # img1 = img1.half()
+            # img2 = img2.half()
 
-            model_without_ddp.init_bhwd(img1.shape[0], img1.shape[-2], img1.shape[-1], device)
+            model_without_ddp.init_bhwd(img1.shape[0], img1.shape[-2], img1.shape[-1], device, amp=False)
 
-            with torch.cuda.amp.autocast(enabled=True):
+            with torch.cuda.amp.autocast(enabled=False):
                 flow_preds = model(img1, img2, iters_s16=4, iters_s8=7)
                 loss, metrics = flow_loss_func(flow_preds, flow_gt, valid, args.max_flow)
 
@@ -171,27 +173,35 @@ def main(args):
             for name, param in model.named_parameters():
                 if param.grad is not None and not torch.all(torch.isfinite(param.grad)):
                     bad_grad = True
-                    print(name, param.grad.mean().item())
+                    fprint(name, param.grad.mean().item())
 
             if bad_grad:
-                print("Bad gradients detected.")
+                fprint('value of loss:', loss.item())
+                fprint("value of bad_grad:", bad_grad)
+                fprint("Bad gradients detected.")
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
 
             # Log metrics to WandB
+            """   
             wandb.log({
                 'step': total_steps,
                 'loss': loss.item(),
                 'epe': metrics['epe'],
                 'mag': metrics['mag'],
                 'learning_rate': optimizer.param_groups[-1]['lr']
-            })
+            }) 
+            """
 
-            print("\rTotal Steps:", total_steps, "EPE: ", round(metrics['epe'], 3), "Mag", round(metrics['mag'], 3), "lr:", optimizer.param_groups[-1]['lr'], end="")
+            fprint("Total Steps:", total_steps, "EPE: ", round(metrics['epe'], 3), "Mag", round(metrics['mag'], 3), "lr:", optimizer.param_groups[-1]['lr'], end="")
+            with open('log.txt', 'a') as log_file:
+                log_file.write(f"Total Steps: {total_steps} EPE: {round(metrics['epe'], 3)} Mag: {round(metrics['mag'], 3)} lr: {optimizer.param_groups[-1]['lr']}\n")
 
             total_steps += 1
+
+            
 
             # Validation and checkpoint saving
             if total_steps % args.val_freq == 0:
@@ -200,7 +210,7 @@ def main(args):
                     torch.save({'model': model_without_ddp.state_dict()}, checkpoint_path)
 
                     # Log checkpoint to WandB
-                    wandb.save(checkpoint_path)
+                    # wandb.save(checkpoint_path)
 
                 val_results = {}
                 if 'things' in args.val_dataset:
@@ -239,11 +249,13 @@ def main(args):
                         f.write('\n\n')
 
                     # Log validation metrics to WandB
-                    wandb.log(val_results)
+                    # wandb.log(val_results)
 
                 model.train()
 
         epoch += 1
+        if input("Exit? ").lower() == '\n':
+            exit()
 
 
 

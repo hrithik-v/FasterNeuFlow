@@ -403,7 +403,7 @@ class HAT(nn.Module):
                 )
                 x = x + self.gamma1 * self.upsampler(
                     ctr_image_space.to(dtype=torch.float32)
-                ).flatten(2).transpose(1, 2).to(dtype=x.dtype)
+                ).flatten(2).transpose(1, 2).to(dtype=torch.float32)
         # print("HAT Final:", "x:", x.shape, "ct:", ct.shape if ct is not None else None)
         return x, ct
 
