@@ -17,8 +17,8 @@ def validate_chairs(model, device):
     model.eval()
     epe_list = []
     results = {}
-
-    val_dataset = datasets.FlyingChairs(split='validation')
+    aug_params = {'crop_size': (224, 224), 'min_scale': -0.1, 'max_scale': 1.0, 'do_flip': True}
+    val_dataset = datasets.FlyingChairs(aug_params=aug_params,split='validation')
 
     print('Number of validation image pairs: %d' % len(val_dataset))
 
